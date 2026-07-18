@@ -31,8 +31,10 @@ export function createMcpServer(office: OfficeService): McpServer {
       inputSchema: {
         name: z.string().min(1).max(64).describe("你的工号/名字，例如 cursor-ab12cd"),
         kind: z
-          .enum(["cursor-ide", "codex-cli"])
-          .describe("你的类型：Cursor IDE 会话填 cursor-ide，Codex 终端会话填 codex-cli"),
+          .enum(["cursor-ide", "codex-cli", "claude-cli"])
+          .describe(
+            "你的类型：Cursor IDE 会话填 cursor-ide，Codex 终端填 codex-cli，Claude Code 填 claude-cli",
+          ),
         workspace: z.string().optional().describe("你当前的工作目录"),
       },
     },
@@ -115,6 +117,29 @@ export function createMcpServer(office: OfficeService): McpServer {
       },
     },
     async (args) => text(office.getContext(args.brief_limit ?? 10)),
+  );
+
+  server.registerTool(
+    "create_task",
+    {
+      title: "创建任务",
+      description: "创建一个新任务，可指定负责成员（assignee 填工号），用于拆解和分派工作。",
+      inputSchema: {
+        agent: z.string().describe("你的工号"),
+        title: z.string().min(1).max(200).describe("任务标题"),
+        description: z.string().optional().describe("任务说明"),
+        assignee: z.string().optional().describe("负责成员的工号，可选"),
+      },
+    },
+    async (args) => {
+      const task = office.createTask({
+        title: args.title,
+        description: args.description ?? null,
+        createdBy: args.agent,
+        assigneeName: args.assignee ?? null,
+      });
+      return text({ ok: true, task });
+    },
   );
 
   server.registerTool(

@@ -10,9 +10,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_PORT, loadConfig } from "../config.js";
 import {
+  mergeClaudeMcpJson,
+  mergeClaudeSettings,
   mergeCodexToml,
   mergeHooksJson,
   mergeMcpJson,
+  removeFromClaudeSettings,
   removeFromCodexToml,
   removeFromHooksJson,
   removeFromMcpJson,
@@ -63,6 +66,14 @@ const AGENTS_MD_BLOCK = `## Agent Office 协作协议（Codex）
 - 每轮开始前调用 \`read_inbox\` 查看 @你 的消息；完成阶段性工作后调用 \`publish_brief\` 发布简报。
 - 需要其他成员（含 Cursor 中的 Agent）协助时，用 \`send_message\` 并 @对方工号；\`get_context\` 可查花名册与最新简报。`;
 
+const CLAUDE_MD_BLOCK = `## Agent Office 协作协议（Claude Code）
+
+本机运行着多 Agent 协作办公室（MCP 服务名 \`agent-office\`，网页 http://127.0.0.1:${DEFAULT_PORT}）。
+你的工号会在会话开始时由系统注入（claude-xxxxxx）。
+
+- 每轮开始前调用 \`read_inbox\` 查看 @你 的消息；完成阶段性工作后调用 \`publish_brief\` 发布简报。
+- 需要其他成员（含 Cursor/Codex 中的 Agent）协助时，用 \`send_message\` 并 @对方工号；\`get_context\` 可查花名册与最新简报。`;
+
 interface InstallPaths {
   workspace: string;
   cursorMcp: string;
@@ -70,6 +81,9 @@ interface InstallPaths {
   cursorRule: string;
   agentsMd: string;
   codexConfig: string;
+  claudeSettings: string;
+  claudeMcp: string;
+  claudeMd: string;
 }
 
 function resolvePaths(workspace: string): InstallPaths {
@@ -80,6 +94,9 @@ function resolvePaths(workspace: string): InstallPaths {
     cursorRule: join(workspace, ".cursor", "rules", "agent-office.mdc"),
     agentsMd: join(workspace, "AGENTS.md"),
     codexConfig: join(homedir(), ".codex", "config.toml"),
+    claudeSettings: join(workspace, ".claude", "settings.json"),
+    claudeMcp: join(workspace, ".mcp.json"),
+    claudeMd: join(workspace, "CLAUDE.md"),
   };
 }
 
@@ -90,6 +107,7 @@ export function install(workspace: string): void {
   const node = process.execPath;
   const cursorHookCmd = `"${node}" "${join(HOOKS_DIR, "cursor-hook.mjs")}"`;
   const codexNotifyCmd = [node, join(HOOKS_DIR, "codex-notify.mjs")];
+  const claudeHookCmd = `"${node}" "${join(HOOKS_DIR, "claude-hook.mjs")}"`;
   const backups: string[] = [];
   const notes: string[] = [];
 
@@ -135,6 +153,30 @@ export function install(workspace: string): void {
       "~/.codex/config.toml 已存在其他 notify 配置，未覆盖；如需回帧简报请手工把 codex-notify.mjs 加入 notify。",
     );
   }
+
+  // 6. Claude Code：项目级 hooks + MCP + CLAUDE.md 协作协议
+  const claudeSettingsBackup = backup(paths.claudeSettings);
+  if (claudeSettingsBackup) backups.push(claudeSettingsBackup);
+  mkdirSync(dirname(paths.claudeSettings), { recursive: true });
+  writeFileSync(
+    paths.claudeSettings,
+    mergeClaudeSettings(readIfExists(paths.claudeSettings), claudeHookCmd),
+    "utf8",
+  );
+  const claudeMcpBackup = backup(paths.claudeMcp);
+  if (claudeMcpBackup) backups.push(claudeMcpBackup);
+  writeFileSync(
+    paths.claudeMcp,
+    mergeClaudeMcpJson(readIfExists(paths.claudeMcp), mcpUrl),
+    "utf8",
+  );
+  const claudeMdBackup = backup(paths.claudeMd);
+  if (claudeMdBackup) backups.push(claudeMdBackup);
+  writeFileSync(
+    paths.claudeMd,
+    upsertMarkerBlock(readIfExists(paths.claudeMd), CLAUDE_MD_BLOCK),
+    "utf8",
+  );
 
   console.log("[agent-office] 安装完成。");
   console.log(`  工作区: ${workspace}`);
@@ -182,6 +224,24 @@ export function uninstall(workspace: string): void {
     backup(paths.codexConfig);
     writeFileSync(paths.codexConfig, removeFromCodexToml(codex), "utf8");
     touched.push(paths.codexConfig);
+  }
+  const claudeSettings = readIfExists(paths.claudeSettings);
+  if (claudeSettings) {
+    backup(paths.claudeSettings);
+    writeFileSync(paths.claudeSettings, removeFromClaudeSettings(claudeSettings), "utf8");
+    touched.push(paths.claudeSettings);
+  }
+  const claudeMcp = readIfExists(paths.claudeMcp);
+  if (claudeMcp) {
+    backup(paths.claudeMcp);
+    writeFileSync(paths.claudeMcp, removeFromMcpJson(claudeMcp), "utf8");
+    touched.push(paths.claudeMcp);
+  }
+  const claudeMd = readIfExists(paths.claudeMd);
+  if (claudeMd) {
+    backup(paths.claudeMd);
+    writeFileSync(paths.claudeMd, removeMarkerBlock(claudeMd), "utf8");
+    touched.push(paths.claudeMd);
   }
   console.log("[agent-office] 已卸载接入配置（均有备份）。规则文件如需删除请手工移除：");
   console.log(`  - ${paths.cursorRule}`);

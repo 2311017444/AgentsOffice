@@ -19,6 +19,7 @@ export interface Health {
   port: number;
   dataDir: string;
   codexCli: boolean;
+  claudeCli: boolean;
   cursorKey: boolean;
 }
 
@@ -53,13 +54,28 @@ export const api = {
     }).then((r) => json<OfficeTask>(r)),
   createManagedAgent: (input: {
     name: string;
-    kind: "codex" | "cursor";
+    kind: "codex" | "cursor" | "claude";
     workspace: string;
     sandbox: "read-only" | "workspace-write";
+    model?: string;
   }) =>
     fetch("/api/agents/managed", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
     }).then((r) => json<AgentCard>(r)),
+  updateAgent: (id: string, patch: { name?: string; model?: string }) =>
+    fetch(`/api/agents/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }).then((r) => json<AgentCard>(r)),
+  dispatch: (input: { title: string; description?: string; agents?: string[] }) =>
+    fetch("/api/dispatch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }).then((r) =>
+      json<{ assignedTo: string[]; reason: string; task: OfficeTask }>(r),
+    ),
 };

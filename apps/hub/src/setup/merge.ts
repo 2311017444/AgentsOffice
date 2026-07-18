@@ -25,6 +25,8 @@ export function removeFromMcpJson(existing: string): string {
 const HOOK_EVENTS = [
   "sessionStart",
   "beforeSubmitPrompt",
+  "beforeShellExecution",
+  "afterFileEdit",
   "afterAgentResponse",
   "stop",
   "sessionEnd",
@@ -71,7 +73,80 @@ export function removeFromHooksJson(existing: string): string | null {
   return JSON.stringify(doc, null, 2) + "\n";
 }
 
-/** 在文本中插入/替换标记块（用于 AGENTS.md） */
+const CLAUDE_HOOK_EVENTS = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "Stop",
+  "SessionEnd",
+] as const;
+
+const CLAUDE_HOOK_MARK = "claude-hook.mjs";
+
+/**
+ * 合并 Claude Code settings.json 的 hooks（结构：
+ * hooks.<Event> = [{ matcher?, hooks: [{type:"command", command}] }]），幂等。
+ */
+export function mergeClaudeSettings(existing: string | null, hookCommand: string): string {
+  let doc: any = {};
+  if (existing?.trim()) {
+    try {
+      doc = JSON.parse(existing);
+    } catch {
+      throw new Error("现有 Claude settings.json 不是合法 JSON，请先手工修复");
+    }
+  }
+  doc.hooks = doc.hooks ?? {};
+  for (const event of CLAUDE_HOOK_EVENTS) {
+    const groups: any[] = Array.isArray(doc.hooks[event]) ? doc.hooks[event] : [];
+    const filtered = groups.filter(
+      (g) =>
+        !(Array.isArray(g?.hooks) &&
+          g.hooks.some(
+            (h: any) => typeof h?.command === "string" && h.command.includes(CLAUDE_HOOK_MARK),
+          )),
+    );
+    filtered.push({ hooks: [{ type: "command", command: hookCommand }] });
+    doc.hooks[event] = filtered;
+  }
+  return JSON.stringify(doc, null, 2) + "\n";
+}
+
+export function removeFromClaudeSettings(existing: string): string {
+  const doc = JSON.parse(existing);
+  if (doc?.hooks) {
+    for (const event of Object.keys(doc.hooks)) {
+      if (!Array.isArray(doc.hooks[event])) continue;
+      doc.hooks[event] = doc.hooks[event].filter(
+        (g: any) =>
+          !(Array.isArray(g?.hooks) &&
+            g.hooks.some(
+              (h: any) => typeof h?.command === "string" && h.command.includes(CLAUDE_HOOK_MARK),
+            )),
+      );
+      if (doc.hooks[event].length === 0) delete doc.hooks[event];
+    }
+    if (Object.keys(doc.hooks).length === 0) delete doc.hooks;
+  }
+  return JSON.stringify(doc, null, 2) + "\n";
+}
+
+/** 合并 Claude Code 项目级 .mcp.json：插入/覆盖 agent-office（HTTP） */
+export function mergeClaudeMcpJson(existing: string | null, mcpUrl: string): string {
+  let doc: any = { mcpServers: {} };
+  if (existing?.trim()) {
+    try {
+      doc = JSON.parse(existing);
+    } catch {
+      throw new Error("现有 .mcp.json 不是合法 JSON，请先手工修复");
+    }
+  }
+  doc.mcpServers = doc.mcpServers ?? {};
+  doc.mcpServers["agent-office"] = { type: "http", url: mcpUrl };
+  return JSON.stringify(doc, null, 2) + "\n";
+}
+
+/** 在文本中插入/替换标记块（用于 AGENTS.md / CLAUDE.md） */
 export function upsertMarkerBlock(
   content: string | null,
   block: string,

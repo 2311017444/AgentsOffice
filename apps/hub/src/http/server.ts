@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url";
 import type { OfficeConfig } from "../config.js";
 import type { OfficeService } from "../domain/office.js";
 import { USER_AGENT_NAME } from "../domain/office.js";
-import { handleCodexNotify, handleCursorHook } from "../integrations/ingest.js";
+import {
+  handleClaudeHook,
+  handleCodexNotify,
+  handleCursorHook,
+} from "../integrations/ingest.js";
 import { createMcpServer } from "../mcp/tools.js";
 import { cliExists } from "../util.js";
 
@@ -50,6 +54,9 @@ export async function createServer(
   app.post("/ingest/codex-notify", async (request) => {
     return handleCodexNotify(office, (request.body ?? {}) as Record<string, any>);
   });
+  app.post("/ingest/claude-hook", async (request) => {
+    return handleClaudeHook(office, (request.body ?? {}) as Record<string, any>);
+  });
 
   // ---------- REST API ----------
   app.get("/api/health", async () => ({
@@ -57,6 +64,7 @@ export async function createServer(
     port: config.port,
     dataDir: config.dataDir,
     codexCli: await cliExists("codex"),
+    claudeCli: await cliExists("claude"),
     cursorKey: Boolean(process.env.CURSOR_API_KEY),
   }));
 
@@ -109,26 +117,60 @@ export async function createServer(
   app.post("/api/agents/managed", async (request, reply) => {
     const body = (request.body ?? {}) as {
       name?: string;
-      kind?: "codex" | "cursor";
+      kind?: "codex" | "cursor" | "claude";
       workspace?: string;
       sandbox?: "read-only" | "workspace-write";
+      model?: string;
     };
     if (!body.name?.trim()) return reply.code(400).send({ error: "name 不能为空" });
-    if (body.kind !== "codex" && body.kind !== "cursor") {
-      return reply.code(400).send({ error: "kind 必须是 codex 或 cursor" });
-    }
+    const kindMap = {
+      codex: "codex-managed",
+      cursor: "cursor-managed",
+      claude: "claude-managed",
+    } as const;
+    const kind = body.kind ? kindMap[body.kind] : undefined;
+    if (!kind) return reply.code(400).send({ error: "kind 必须是 codex、cursor 或 claude" });
     if (office.store.getAgentByName(body.name.trim())) {
       return reply.code(409).send({ error: "该工号已存在" });
     }
     const agent = office.store.registerAgent({
       name: body.name.trim(),
-      kind: body.kind === "codex" ? "codex-managed" : "cursor-managed",
+      kind,
       workspace: body.workspace?.trim() || null,
-      meta: body.kind === "codex" ? { sandbox: body.sandbox ?? "read-only" } : {},
+      meta: {
+        ...(kind !== "cursor-managed" ? { sandbox: body.sandbox ?? "read-only" } : {}),
+        ...(body.model?.trim() ? { model: body.model.trim() } : {}),
+      },
       status: "online",
     });
     office.event({ type: "join", agentId: agent.id, text: "托管工位创建" });
     return agent;
+  });
+
+  app.patch("/api/agents/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { name?: string; model?: string };
+    const agent = office.renameAgent(id, body);
+    if (!agent) return reply.code(409).send({ error: "改名失败：Agent 不存在或工号已被占用" });
+    return agent;
+  });
+
+  app.post("/api/dispatch", async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      title?: string;
+      description?: string;
+      agents?: string[];
+    };
+    if (!body.title?.trim()) return reply.code(400).send({ error: "title 不能为空" });
+    const result = office.dispatchWork({
+      title: body.title.trim(),
+      description: body.description?.trim() || null,
+      agentNames: body.agents?.filter((a) => a?.trim()),
+      auto: !body.agents || body.agents.length === 0,
+      requestedBy: USER_AGENT_NAME,
+    });
+    if (!result) return reply.code(409).send({ error: "没有可分派的在线成员" });
+    return result;
   });
 
   // ---------- SSE ----------

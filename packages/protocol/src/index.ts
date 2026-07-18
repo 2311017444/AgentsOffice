@@ -1,11 +1,14 @@
 import { z } from "zod";
 
-/** Agent 种类：手工 IDE 会话、手工 Codex 会话、托管 Agent、人类用户 */
+/** Agent 种类：手工会话（Cursor/Codex/Claude）、托管 Agent、主管、人类用户 */
 export type AgentKind =
   | "cursor-ide"
   | "codex-cli"
+  | "claude-cli"
   | "cursor-managed"
   | "codex-managed"
+  | "claude-managed"
+  | "supervisor"
   | "user";
 
 export type AgentStatus = "online" | "busy" | "offline";
@@ -88,10 +91,28 @@ export type BriefInput = z.infer<typeof BriefInputSchema>;
 export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
   "cursor-ide": "Cursor 会话",
   "codex-cli": "Codex 会话",
+  "claude-cli": "Claude 会话",
   "cursor-managed": "Cursor 托管",
   "codex-managed": "Codex 托管",
+  "claude-managed": "Claude 托管",
+  supervisor: "办公室主管",
   user: "人类成员",
 };
+
+/** Agent meta 中约定的公共字段 */
+export interface AgentMeta {
+  /** 模型标识（来自 hooks 自动采集或人工备注） */
+  model?: string;
+  /** 当前正在做的事（实时工作台展示） */
+  lastActivity?: string;
+  lastActivityAt?: number;
+  threadId?: string;
+  sessionId?: string;
+  cursorAgentId?: string;
+  sandbox?: string;
+}
+
+export const SUPERVISOR_NAME = "主管";
 
 const ALL_ALIASES = new Set(["all", "所有人", "全员", "everyone"]);
 

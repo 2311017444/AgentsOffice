@@ -5,8 +5,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { AGENT_KIND_LABELS } from "@agent-office/protocol";
-import type { AgentCard, OfficeBrief, OfficeTask } from "@agent-office/protocol";
+import { AGENT_KIND_LABELS, SUPERVISOR_NAME } from "@agent-office/protocol";
+import type { AgentCard, AgentMeta, OfficeBrief, OfficeTask } from "@agent-office/protocol";
 import { api, type Health, type OfficeState } from "./api";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -27,8 +27,10 @@ const SOURCE_LABELS: Record<string, string> = {
   mcp: "主动发布",
   "cursor-hook": "Cursor 回帧",
   "codex-notify": "Codex 回帧",
+  "claude-hook": "Claude 回帧",
   "codex-managed": "托管执行",
   "cursor-managed": "托管执行",
+  "claude-managed": "托管执行",
 };
 
 function timeAgo(ts: number): string {
@@ -52,24 +54,100 @@ function highlightMentions(text: string): React.ReactNode[] {
   );
 }
 
-// ---------- 工位卡片 ----------
+const meta = (agent: AgentCard): AgentMeta => agent.meta as AgentMeta;
 
-function AgentBadge({ agent, onMention }: { agent: AgentCard; onMention: (name: string) => void }) {
+// ---------- 工位卡片（含改名/模型编辑） ----------
+
+function AgentBadge({
+  agent,
+  onMention,
+  onChanged,
+}: {
+  agent: AgentCard;
+  onMention: (name: string) => void;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(agent.name);
+  const [model, setModel] = useState(meta(agent).model ?? "");
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    try {
+      await api.updateAgent(agent.id, { name: name.trim(), model });
+      setEditing(false);
+      setError("");
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const m = meta(agent);
   return (
-    <div className={`badge status-${agent.status}`}>
+    <div className={`badge status-${agent.status} kind-${agent.kind}`}>
       <div className="badge-top">
         <span className="lamp" aria-label={STATUS_LABELS[agent.status]} />
-        <span className="badge-name">{agent.name}</span>
+        {editing ? (
+          <input
+            className="badge-edit-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void save()}
+          />
+        ) : (
+          <span className="badge-name">{agent.name}</span>
+        )}
         {(agent.pendingCount ?? 0) > 0 && (
           <span className="pending-pill" title="未读消息">
             {agent.pendingCount}
           </span>
         )}
+        {agent.kind !== "user" && agent.kind !== "supervisor" && (
+          <button
+            className="icon-btn"
+            title="改名 / 设置模型"
+            onClick={() => {
+              setEditing((v) => !v);
+              setName(agent.name);
+              setModel(m.model ?? "");
+            }}
+          >
+            ✎
+          </button>
+        )}
       </div>
-      <div className="badge-kind">{AGENT_KIND_LABELS[agent.kind] ?? agent.kind}</div>
+      <div className="badge-kind">
+        {AGENT_KIND_LABELS[agent.kind] ?? agent.kind}
+        {m.model && !editing && <span className="model-chip">{m.model}</span>}
+      </div>
+      {editing && (
+        <div className="badge-edit">
+          <input
+            placeholder="模型备注（如 gpt-5.6-sol / opus-4.8）"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void save()}
+          />
+          {error && <div className="form-error">{error}</div>}
+          <div className="form-actions">
+            <button className="primary-btn" onClick={() => void save()}>
+              保存
+            </button>
+            <button className="ghost-btn" onClick={() => setEditing(false)}>
+              取消
+            </button>
+          </div>
+        </div>
+      )}
       {agent.workspace && (
         <div className="badge-workspace" title={agent.workspace}>
           {agent.workspace.split(/[\\/]/).slice(-2).join("/")}
+        </div>
+      )}
+      {m.lastActivity && (
+        <div className="badge-activity" title={m.lastActivity}>
+          {m.lastActivity}
         </div>
       )}
       <div className="badge-footer">
@@ -91,8 +169,9 @@ function AgentBadge({ agent, onMention }: { agent: AgentCard; onMention: (name: 
 function NewAgentForm({ onDone }: { onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<"codex" | "cursor">("codex");
+  const [kind, setKind] = useState<"codex" | "cursor" | "claude">("codex");
   const [workspace, setWorkspace] = useState("");
+  const [model, setModel] = useState("");
   const [sandbox, setSandbox] = useState<"read-only" | "workspace-write">("read-only");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -109,10 +188,17 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await api.createManagedAgent({ name: name.trim(), kind, workspace: workspace.trim(), sandbox });
+      await api.createManagedAgent({
+        name: name.trim(),
+        kind,
+        workspace: workspace.trim(),
+        sandbox,
+        model: model.trim() || undefined,
+      });
       setOpen(false);
       setName("");
       setWorkspace("");
+      setModel("");
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -128,8 +214,9 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
-      <select value={kind} onChange={(e) => setKind(e.target.value as "codex" | "cursor")}>
+      <select value={kind} onChange={(e) => setKind(e.target.value as any)}>
         <option value="codex">Codex 托管</option>
+        <option value="claude">Claude 托管</option>
         <option value="cursor">Cursor 托管（需 API Key）</option>
       </select>
       <input
@@ -137,11 +224,13 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
         value={workspace}
         onChange={(e) => setWorkspace(e.target.value)}
       />
-      {kind === "codex" && (
-        <select
-          value={sandbox}
-          onChange={(e) => setSandbox(e.target.value as "read-only" | "workspace-write")}
-        >
+      <input
+        placeholder="模型备注（可选）"
+        value={model}
+        onChange={(e) => setModel(e.target.value)}
+      />
+      {kind !== "cursor" && (
+        <select value={sandbox} onChange={(e) => setSandbox(e.target.value as any)}>
           <option value="read-only">只读沙箱</option>
           <option value="workspace-write">可写工作区</option>
         </select>
@@ -154,6 +243,83 @@ function NewAgentForm({ onDone }: { onDone: () => void }) {
         <button className="ghost-btn" onClick={() => setOpen(false)}>
           取消
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- 接入向导 ----------
+
+const ONBOARD_TABS = [
+  {
+    id: "cursor",
+    label: "Cursor 已有会话",
+    intro: "把下面这句话直接发给那个 Cursor Agent（MCP 即时生效，不用重启）：",
+    prompt:
+      "本机有 Agent Office 协作中枢（MCP 服务 agent-office）。请调用 register_agent 登记，工号自拟（如 cursor-前端），kind 填 cursor-ide；之后每轮开始先 read_inbox，完成工作后 publish_brief。",
+    note: "本工作区新开的 Cursor 会话会自动登记，无需此步骤。",
+  },
+  {
+    id: "codex",
+    label: "Codex 已有终端",
+    intro: "在那个 Codex 终端里直接输入（若 MCP 未加载需先重启 Codex）：",
+    prompt:
+      "本机有 Agent Office 协作中枢（MCP 服务 agent_office）。请调用 register_agent 登记，工号自拟（如 codex-主力），kind 填 codex-cli；之后每轮开始先 read_inbox，完成工作后 publish_brief。",
+    note: "安装后新启动的 Codex 会话每轮结束会自动回帧简报（notify），并可读到 AGENTS.md 里的协作协议。",
+  },
+  {
+    id: "claude",
+    label: "Claude Code 已有会话",
+    intro: "把下面这句话发给那个 Claude Code 会话：",
+    prompt:
+      "本机有 Agent Office 协作中枢（MCP 服务 agent-office）。请调用 register_agent 登记，工号自拟（如 claude-架构），kind 填 claude-cli；之后每轮开始先 read_inbox，完成工作后 publish_brief。",
+    note: "本工作区新开的 Claude Code 会话会自动登记（hooks 已配置）。",
+  },
+] as const;
+
+function OnboardModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<string>("cursor");
+  const [copied, setCopied] = useState(false);
+  const current = ONBOARD_TABS.find((t) => t.id === tab)!;
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(current.prompt);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal" role="dialog" aria-label="接入已有 Agent" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <h3>把已有 Agent 加入办公室</h3>
+          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <nav className="tabs">
+          {ONBOARD_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={tab === t.id ? "active" : ""}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+        <div className="modal-body">
+          <p>{current.intro}</p>
+          <blockquote className="copy-block">{current.prompt}</blockquote>
+          <button className="primary-btn" onClick={() => void copy()}>
+            {copied ? "已复制 ✓" : "复制这句话"}
+          </button>
+          <p className="modal-note">{current.note}</p>
+          <p className="modal-note">
+            其他工作区接入：<code>node agent-office/apps/hub/dist/setup/install.js install
+            --workspace &lt;路径&gt;</code>
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -215,7 +381,9 @@ function Composer({
       const result = await api.sendMessage(text.trim());
       const managed = result.routed.filter((r) => r.mode === "managed").map((r) => r.name);
       const inbox = result.routed.filter((r) => r.mode === "inbox").map((r) => r.name);
+      const supervisor = result.routed.some((r) => r.mode === "supervisor");
       const parts: string[] = [];
+      if (supervisor) parts.push("主管已接单并自动分派");
       if (managed.length > 0) parts.push(`已唤醒：${managed.join("、")}`);
       if (inbox.length > 0) parts.push(`已入箱（下轮读取）：${inbox.join("、")}`);
       setHint(parts.join("；") || "已发送");
@@ -251,7 +419,7 @@ function Composer({
         ref={inputRef}
         value={text}
         rows={2}
-        placeholder="给办公室发消息，@工号 可呼叫成员（@all 全员）……"
+        placeholder="给办公室发消息，@工号 呼叫成员，@主管 自动分派，@all 全员……"
         onChange={(e) => {
           setText(e.target.value);
           updateSuggestions(e.target.value);
@@ -342,6 +510,84 @@ function BriefCard({ brief }: { brief: OfficeBrief }) {
   );
 }
 
+// ---------- 分派工作 ----------
+
+function DispatchForm({ agents, onDone }: { agents: AgentCard[]; onDone: () => void }) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [hint, setHint] = useState("");
+  const workers = agents.filter((a) => a.kind !== "user" && a.kind !== "supervisor");
+
+  const toggle = (name: string) => {
+    setChosen((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
+  };
+
+  const submit = async () => {
+    if (!title.trim()) return;
+    try {
+      const result = await api.dispatch({
+        title: title.trim(),
+        description: description.trim() || undefined,
+        agents: chosen.length > 0 ? chosen : undefined,
+      });
+      setHint(`已分派给 ${result.assignedTo.join("、")}（${result.reason}）`);
+      setTitle("");
+      setDescription("");
+      setChosen([]);
+      onDone();
+      setTimeout(() => setHint(""), 6000);
+    } catch (e) {
+      setHint(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="dispatch-form">
+      <h4>
+        <span className="supervisor-mark" aria-hidden>
+          主管
+        </span>
+        分派工作
+      </h4>
+      <input
+        placeholder="工作内容标题…"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      <textarea
+        rows={2}
+        placeholder="补充说明（可选）"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      />
+      <div className="dispatch-agents">
+        <span className="dispatch-label">
+          {chosen.length === 0 ? "未选成员 → 主管自动分派" : "指定成员："}
+        </span>
+        <div className="dispatch-chips">
+          {workers.map((a) => (
+            <button
+              key={a.id}
+              className={`chip-toggle ${chosen.includes(a.name) ? "on" : ""} ${a.status === "offline" ? "off-agent" : ""}`}
+              onClick={() => toggle(a.name)}
+              title={`${AGENT_KIND_LABELS[a.kind]} · ${STATUS_LABELS[a.status]}`}
+            >
+              {a.name}
+            </button>
+          ))}
+        </div>
+      </div>
+      {hint && <div className="dispatch-hint">{hint}</div>}
+      <button className="primary-btn" disabled={!title.trim()} onClick={() => void submit()}>
+        {chosen.length > 0 ? `分派给 ${chosen.length} 位成员` : "交给主管分派"}
+      </button>
+    </div>
+  );
+}
+
 // ---------- 任务面板 ----------
 
 function TaskPanel({
@@ -353,32 +599,13 @@ function TaskPanel({
   agents: AgentCard[];
   onChanged: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const assignable = agents.filter((a) => a.kind !== "user");
-
-  const create = async () => {
-    if (!title.trim()) return;
-    await api.createTask(title.trim(), "", null);
-    setTitle("");
-    onChanged();
-  };
-
+  const assignable = agents.filter((a) => a.kind !== "user" && a.kind !== "supervisor");
   return (
-    <section className="panel">
+    <section className="panel panel-tasks">
       <h3>任务看板</h3>
-      <div className="task-new">
-        <input
-          value={title}
-          placeholder="新任务标题…"
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void create()}
-        />
-        <button className="primary-btn" onClick={() => void create()} disabled={!title.trim()}>
-          创建
-        </button>
-      </div>
+      <DispatchForm agents={agents} onDone={onChanged} />
       <ul className="task-list">
-        {tasks.length === 0 && <li className="empty">暂无任务，创建一个分派给成员吧。</li>}
+        {tasks.length === 0 && <li className="empty">暂无任务。</li>}
         {tasks.map((task) => (
           <li key={task.id} className={`task task-${task.status}`}>
             <div className="task-main">
@@ -421,13 +648,83 @@ function TaskPanel({
   );
 }
 
+// ---------- 实时工作台 ----------
+
+function LiveBoard({ state }: { state: OfficeState }) {
+  const workers = state.agents.filter((a) => a.kind !== "user" && a.kind !== "supervisor");
+  const activeTasks = state.tasks.filter(
+    (t) => t.status === "claimed" || t.status === "in_progress",
+  );
+  return (
+    <div className="live-board">
+      {workers.length === 0 && (
+        <p className="empty">还没有成员入驻，先从「接入 Agent」开始。</p>
+      )}
+      {workers.map((agent) => {
+        const m = meta(agent);
+        const task = activeTasks.find((t) => t.assigneeAgentId === agent.id);
+        const latestBrief = state.briefs.find((b) => b.agentId === agent.id);
+        const activityStale =
+          m.lastActivityAt && Date.now() - m.lastActivityAt > 10 * 60_000;
+        return (
+          <article key={agent.id} className={`live-card status-${agent.status}`}>
+            <header>
+              <span className="lamp" />
+              <strong>{agent.name}</strong>
+              <span className="live-kind">{AGENT_KIND_LABELS[agent.kind]}</span>
+              {m.model && <span className="model-chip">{m.model}</span>}
+            </header>
+            <div className="live-now">
+              <span className="live-label">正在做</span>
+              {agent.status === "offline" ? (
+                <span className="live-idle">离席</span>
+              ) : m.lastActivity ? (
+                <span className={activityStale ? "live-stale" : ""}>
+                  {m.lastActivity}
+                  {m.lastActivityAt && (
+                    <time> · {timeAgo(m.lastActivityAt)}</time>
+                  )}
+                </span>
+              ) : (
+                <span className="live-idle">空闲，等待分派</span>
+              )}
+            </div>
+            {task && (
+              <div className="live-task">
+                <span className="live-label">当前任务</span>
+                <span>
+                  {task.title}（{TASK_STATUS_LABELS[task.status]}）
+                </span>
+              </div>
+            )}
+            <div className="live-brief">
+              <span className="live-label">最近简报</span>
+              {latestBrief ? (
+                <span title={latestBrief.result}>
+                  {latestBrief.title} <time>· {timeAgo(latestBrief.createdAt)}</time>
+                </span>
+              ) : (
+                <span className="live-idle">尚无简报</span>
+              )}
+            </div>
+            {(agent.pendingCount ?? 0) > 0 && (
+              <div className="live-pending">{agent.pendingCount} 条未读消息待处理</div>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------- 主应用 ----------
 
 export function App() {
   const [state, setState] = useState<OfficeState | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [mentionPrefill, setMentionPrefill] = useState("");
-  const [tab, setTab] = useState<"feed" | "briefs">("feed");
+  const [view, setView] = useState<"office" | "live">("office");
+  const [onboardOpen, setOnboardOpen] = useState(false);
   const refreshTimer = useRef<number | null>(null);
 
   const refresh = useCallback(() => {
@@ -446,9 +743,11 @@ export function App() {
     const healthTimer = window.setInterval(() => {
       api.health().then(setHealth).catch(() => setHealth(null));
     }, 30_000);
+    const stateTimer = window.setInterval(refresh, 15_000);
     return () => {
       source.close();
       window.clearInterval(healthTimer);
+      window.clearInterval(stateTimer);
     };
   }, [refresh]);
 
@@ -460,7 +759,7 @@ export function App() {
         key: `m-${m.id}`,
         at: m.createdAt,
         node: (
-          <div className="feed-item feed-message">
+          <div className={`feed-item feed-message ${m.fromName === SUPERVISOR_NAME ? "from-supervisor" : ""}`}>
             <div className="feed-head">
               <strong>{m.fromName}</strong>
               <time>{timeAgo(m.createdAt)}</time>
@@ -495,13 +794,13 @@ export function App() {
         ),
       });
     }
-    return items.sort((a, b) => a.at - b.at).slice(-120);
+    return items.sort((a, b) => a.at - b.at).slice(-150);
   }, [state]);
 
   const feedEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    feedEndRef.current?.scrollIntoView({ block: "end" });
-  }, [feed.length, tab]);
+    if (view === "office") feedEndRef.current?.scrollIntoView({ block: "end" });
+  }, [feed.length, view]);
 
   if (!state) {
     return (
@@ -515,6 +814,7 @@ export function App() {
   }
 
   const agents = state.agents.filter((a) => a.kind !== "user");
+  const deskAgents = agents.filter((a) => a.kind !== "supervisor");
 
   return (
     <div className="office">
@@ -528,12 +828,36 @@ export function App() {
             <p>字字动画 · 多 Agent 协作中枢</p>
           </div>
         </div>
+        <nav className="view-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={view === "office"}
+            className={view === "office" ? "active" : ""}
+            onClick={() => setView("office")}
+          >
+            办公室
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "live"}
+            className={view === "live" ? "active" : ""}
+            onClick={() => setView("live")}
+          >
+            实时工作台
+          </button>
+        </nav>
         <div className="health">
+          <button className="ghost-btn onboard-btn" onClick={() => setOnboardOpen(true)}>
+            ＋ 接入 Agent
+          </button>
           <span className={`chip ${health ? "ok" : "bad"}`}>
             中枢 {health ? "在线" : "离线"}
           </span>
           <span className={`chip ${health?.codexCli ? "ok" : "bad"}`}>
-            Codex CLI {health?.codexCli ? "可用" : "未检测到"}
+            Codex {health?.codexCli ? "可用" : "未检测到"}
+          </span>
+          <span className={`chip ${health?.claudeCli ? "ok" : "warn"}`}>
+            Claude {health?.claudeCli ? "可用" : "未检测到"}
           </span>
           <span className={`chip ${health?.cursorKey ? "ok" : "warn"}`}>
             Cursor Key {health?.cursorKey ? "已配置" : "未配置"}
@@ -541,48 +865,36 @@ export function App() {
         </div>
       </header>
 
-      <main className="layout">
-        <aside className="col col-roster">
-          <section className="panel">
-            <h3>工位（{agents.length}）</h3>
-            <div className="badges">
-              {agents.length === 0 && (
-                <p className="empty">
-                  还没有成员入驻。启动一个 Cursor 会话或 Codex 终端，它们会自动登记；也可以新建托管工位。
-                </p>
-              )}
-              {agents.map((agent) => (
-                <AgentBadge
-                  key={agent.id}
-                  agent={agent}
-                  onMention={(name) => setMentionPrefill(`@${name}`)}
-                />
-              ))}
-            </div>
-            <NewAgentForm onDone={refresh} />
-          </section>
-        </aside>
+      {view === "live" ? (
+        <main className="live-main">
+          <LiveBoard state={state} />
+        </main>
+      ) : (
+        <main className="layout">
+          <aside className="col col-roster">
+            <section className="panel">
+              <h3>工位（{deskAgents.length}）</h3>
+              <div className="badges">
+                {deskAgents.length === 0 && (
+                  <p className="empty">
+                    还没有成员入驻。点击右上角「接入 Agent」，或新建托管工位。
+                  </p>
+                )}
+                {deskAgents.map((agent) => (
+                  <AgentBadge
+                    key={agent.id}
+                    agent={agent}
+                    onMention={(name) => setMentionPrefill(`@${name}`)}
+                    onChanged={refresh}
+                  />
+                ))}
+              </div>
+              <NewAgentForm onDone={refresh} />
+            </section>
+          </aside>
 
-        <section className="col col-center">
-          <nav className="tabs" role="tablist">
-            <button
-              role="tab"
-              aria-selected={tab === "feed"}
-              className={tab === "feed" ? "active" : ""}
-              onClick={() => setTab("feed")}
-            >
-              动态流
-            </button>
-            <button
-              role="tab"
-              aria-selected={tab === "briefs"}
-              className={tab === "briefs" ? "active" : ""}
-              onClick={() => setTab("briefs")}
-            >
-              简报墙（{state.briefs.length}）
-            </button>
-          </nav>
-          {tab === "feed" ? (
+          <section className="col col-center">
+            <div className="center-title">动态流</div>
             <div className="feed" role="log">
               {feed.length === 0 && <p className="empty">还没有动态。发一条消息试试。</p>}
               {feed.map((item) => (
@@ -590,23 +902,27 @@ export function App() {
               ))}
               <div ref={feedEndRef} />
             </div>
-          ) : (
-            <div className="brief-wall">
-              {state.briefs.length === 0 && (
-                <p className="empty">还没有简报。成员完成工作后会自动出现在这里。</p>
-              )}
-              {state.briefs.map((brief) => (
-                <BriefCard key={brief.id} brief={brief} />
-              ))}
-            </div>
-          )}
-          <Composer agents={state.agents} prefill={mentionPrefill} onSent={refresh} />
-        </section>
+            <Composer agents={state.agents} prefill={mentionPrefill} onSent={refresh} />
+          </section>
 
-        <aside className="col col-tasks">
-          <TaskPanel tasks={state.tasks} agents={state.agents} onChanged={refresh} />
-        </aside>
-      </main>
+          <aside className="col col-right">
+            <section className="panel panel-briefs">
+              <h3>简报墙（{state.briefs.length}）</h3>
+              <div className="brief-wall">
+                {state.briefs.length === 0 && (
+                  <p className="empty">还没有简报。成员完成工作后会自动出现。</p>
+                )}
+                {state.briefs.map((brief) => (
+                  <BriefCard key={brief.id} brief={brief} />
+                ))}
+              </div>
+            </section>
+            <TaskPanel tasks={state.tasks} agents={state.agents} onChanged={refresh} />
+          </aside>
+        </main>
+      )}
+
+      {onboardOpen && <OnboardModal onClose={() => setOnboardOpen(false)} />}
     </div>
   );
 }

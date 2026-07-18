@@ -203,6 +203,23 @@ export class OfficeStore {
       .run(status, now(), agentId);
   }
 
+  /** 改名（工号唯一）；冲突时返回 null */
+  renameAgent(agentId: string, newName: string): AgentCard | null {
+    const existing = this.getAgentByName(newName);
+    if (existing && existing.id !== agentId) return null;
+    this.db.prepare("UPDATE agents SET name = ? WHERE id = ?").run(newName, agentId);
+    return this.getAgentById(agentId);
+  }
+
+  /** 记录 Agent 当前正在做的事（实时工作台展示） */
+  setAgentActivity(agentId: string, activity: string | null): void {
+    this.updateAgentMeta(agentId, {
+      lastActivity: activity,
+      lastActivityAt: activity ? now() : undefined,
+    });
+    this.db.prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?").run(now(), agentId);
+  }
+
   updateAgentMeta(agentId: string, patch: Record<string, unknown>): void {
     const agent = this.getAgentById(agentId);
     if (!agent) return;

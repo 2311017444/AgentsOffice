@@ -85,6 +85,45 @@ export async function runCodexTurn(
   };
 }
 
+/** 托管 Claude：claude -p --output-format json，提示词经 stdin，session_id 存 meta 续聊 */
+export async function runClaudeTurn(
+  agent: AgentCard,
+  prompt: string,
+  config: OfficeConfig,
+): Promise<TurnResult> {
+  const meta = agent.meta as { sessionId?: string; sandbox?: string };
+  const args = ["-p", "--output-format", "json"];
+  if (meta.sessionId) args.push("--resume", meta.sessionId);
+  if (meta.sandbox === "workspace-write") args.push("--permission-mode", "acceptEdits");
+
+  const result = await runCli("claude", args, {
+    cwd: agent.workspace ?? undefined,
+    timeoutMs: config.codexTurnTimeoutMs,
+    stdinData: prompt,
+  });
+  if (result.timedOut) {
+    throw new Error(`Claude 运行超时（${Math.round(config.codexTurnTimeoutMs / 60000)} 分钟）`);
+  }
+  let parsed: any = null;
+  try {
+    parsed = JSON.parse(result.stdout.trim());
+  } catch {
+    /* 非 JSON 输出走兜底 */
+  }
+  if (result.code !== 0 && !parsed?.result) {
+    throw new Error(
+      `claude -p 退出码 ${result.code}：${truncate(result.stderr || result.stdout, 400)}`,
+    );
+  }
+  return {
+    text:
+      (typeof parsed?.result === "string" && parsed.result) ||
+      truncate(result.stdout, 2000) ||
+      "(无输出)",
+    meta: typeof parsed?.session_id === "string" ? { sessionId: parsed.session_id } : undefined,
+  };
+}
+
 /** 托管 Cursor：@cursor/sdk 本地运行；SDK 缺失或无 API Key 时报明确错误 */
 export async function runCursorTurn(
   agent: AgentCard,
@@ -138,12 +177,17 @@ export async function runCursorTurn(
 export function createManagedDispatcher(
   office: OfficeService,
   config: OfficeConfig,
-  runners?: Partial<Record<"codex-managed" | "cursor-managed", TurnRunner>>,
+  runners?: Partial<
+    Record<"codex-managed" | "cursor-managed" | "claude-managed", TurnRunner>
+  >,
 ) {
   const queue = new RunQueue();
   const resolveRunner = (kind: string): TurnRunner => {
     if (kind === "codex-managed") {
       return runners?.["codex-managed"] ?? ((a, p) => runCodexTurn(a, p, config));
+    }
+    if (kind === "claude-managed") {
+      return runners?.["claude-managed"] ?? ((a, p) => runClaudeTurn(a, p, config));
     }
     return runners?.["cursor-managed"] ?? ((a, p) => runCursorTurn(a, p, config));
   };
@@ -152,6 +196,10 @@ export function createManagedDispatcher(
     void queue.enqueue(agent.id, async () => {
       const { store } = office;
       store.setAgentStatus(agent.id, "busy");
+      office.setActivity(
+        agent.id,
+        `执行 ${message.fromName} 的请求：${truncate(message.text.replaceAll(/\s+/g, " "), 80)}`,
+      );
       office.event({ type: "run", agentId: agent.id, text: "收到 @消息，开始执行" });
       const context = store.listBriefs(5).map((b) => ({
         agentName: b.agentName,
@@ -172,7 +220,7 @@ export function createManagedDispatcher(
         office.publishBrief({
           agentName: agent.name,
           kind: "auto",
-          source: agent.kind === "codex-managed" ? "codex-managed" : "cursor-managed",
+          source: agent.kind,
           brief: {
             title: `回复 ${message.fromName}：${truncate(message.text.replaceAll(/\s+/g, " "), 40)}`,
             result: result.text,
@@ -181,9 +229,11 @@ export function createManagedDispatcher(
           idempotencyKey: `run:${agent.id}:${sha1(message.text + message.fromName)}:${Date.now()}`,
         });
         store.setAgentStatus(agent.id, "online");
+        office.setActivity(agent.id, null);
         office.event({ type: "run", agentId: agent.id, text: "执行完成，简报已发布" });
       } catch (error) {
         store.setAgentStatus(agent.id, "online");
+        office.setActivity(agent.id, null);
         office.event({
           type: "run-error",
           agentId: agent.id,

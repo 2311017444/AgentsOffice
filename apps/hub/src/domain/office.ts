@@ -1,5 +1,6 @@
 import {
   parseMentions,
+  SUPERVISOR_NAME,
   type AgentCard,
   type BriefInput,
   type TaskStatus,
@@ -15,6 +16,8 @@ export type ManagedDispatcher = (
 
 export const USER_AGENT_NAME = "老板";
 
+const MANAGED_KINDS = new Set(["codex-managed", "cursor-managed", "claude-managed"]);
+
 /**
  * 办公室领域服务：统一消息路由、任务与简报入口。
  * MCP 工具、REST API、hooks 摄入全部经由这里，保证行为一致。
@@ -26,9 +29,12 @@ export class OfficeService {
     readonly store: OfficeStore,
     readonly bus: OfficeBus,
   ) {
-    // 确保人类用户席位存在
+    // 确保人类用户与主管席位存在
     if (!store.getAgentByName(USER_AGENT_NAME)) {
       store.registerAgent({ name: USER_AGENT_NAME, kind: "user", status: "online" });
+    }
+    if (!store.getAgentByName(SUPERVISOR_NAME)) {
+      store.registerAgent({ name: SUPERVISOR_NAME, kind: "supervisor", status: "online" });
     }
   }
 
@@ -57,7 +63,7 @@ export class OfficeService {
     taskId?: string | null;
   }): {
     messageId: string;
-    routed: Array<{ name: string; mode: "managed" | "inbox" }>;
+    routed: Array<{ name: string; mode: "managed" | "inbox" | "supervisor" }>;
     unmatched: boolean;
   } {
     const sender =
@@ -73,8 +79,9 @@ export class OfficeService {
       if (agent && agent.id !== sender.id) targetAgents.set(agent.id, agent);
     }
     if (all) {
+      // @all 只广播给普通成员；主管只响应显式 @主管，避免每次广播都触发自动分派
       for (const agent of roster) {
-        if (agent.id !== sender.id && agent.kind !== "user") {
+        if (agent.id !== sender.id && agent.kind !== "user" && agent.kind !== "supervisor") {
           targetAgents.set(agent.id, agent);
         }
       }
@@ -87,10 +94,21 @@ export class OfficeService {
       taskId: input.taskId ?? null,
     });
 
-    const routed: Array<{ name: string; mode: "managed" | "inbox" }> = [];
+    const routed: Array<{ name: string; mode: "managed" | "inbox" | "supervisor" }> = [];
     for (const agent of targetAgents.values()) {
-      const isManaged = agent.kind === "codex-managed" || agent.kind === "cursor-managed";
-      if (isManaged && this.managedDispatcher) {
+      if (agent.kind === "supervisor") {
+        // @主管 → 立即转为一次自动分派
+        this.store.markDeliveriesRead(agent.id, [messageId]);
+        routed.push({ name: agent.name, mode: "supervisor" });
+        this.dispatchWork({
+          title: truncate(input.text.replaceAll(/@[\p{L}\p{N}_./-]+\s*/gu, "").trim() || input.text, 120),
+          description: input.text,
+          requestedBy: sender.name,
+          auto: true,
+        });
+        continue;
+      }
+      if (MANAGED_KINDS.has(agent.kind) && this.managedDispatcher) {
         routed.push({ name: agent.name, mode: "managed" });
         this.managedDispatcher(agent, {
           fromName: sender.name,
@@ -224,6 +242,99 @@ export class OfficeService {
     return updated;
   }
 
+  // ---------- Agent 管理 ----------
+
+  renameAgent(agentId: string, patch: { name?: string; model?: string }): AgentCard | null {
+    const agent = this.store.getAgentById(agentId);
+    if (!agent) return null;
+    if (patch.name && patch.name.trim() && patch.name.trim() !== agent.name) {
+      const renamed = this.store.renameAgent(agentId, patch.name.trim());
+      if (!renamed) return null; // 工号冲突
+      this.event({
+        type: "rename",
+        agentId,
+        text: `「${agent.name}」改名为「${patch.name.trim()}」`,
+      });
+    }
+    if (patch.model !== undefined) {
+      this.store.updateAgentMeta(agentId, { model: patch.model.trim() || undefined });
+    }
+    this.emit("agent", { agentId });
+    return this.store.getAgentById(agentId);
+  }
+
+  /** 记录实时活动（不落 events 表，避免刷屏；经 SSE 推送） */
+  setActivity(agentId: string, activity: string | null): void {
+    this.store.setAgentActivity(agentId, activity);
+    this.emit("activity", { agentId, activity });
+  }
+
+  // ---------- 主管分派 ----------
+
+  /**
+   * 分派工作：指定成员或由主管自动挑选。
+   * 自动规则：优先空闲的托管成员（可立即执行），其次在线手工会话（按未读最少）。
+   */
+  dispatchWork(input: {
+    title: string;
+    description?: string | null;
+    agentNames?: string[];
+    auto?: boolean;
+    requestedBy?: string;
+  }): {
+    task: ReturnType<OfficeStore["getTask"]>;
+    assignedTo: string[];
+    reason: string;
+  } | null {
+    let targets: AgentCard[] = [];
+    let reason = "";
+    if (input.agentNames && input.agentNames.length > 0) {
+      targets = input.agentNames
+        .map((n) => this.store.getAgentByName(n))
+        .filter((a): a is AgentCard => Boolean(a));
+      reason = "由用户指定";
+    } else {
+      const candidates = this.store
+        .listAgents()
+        .filter((a) => a.kind !== "user" && a.kind !== "supervisor" && a.status !== "offline");
+      const managedIdle = candidates.filter(
+        (a) => MANAGED_KINDS.has(a.kind) && a.status === "online",
+      );
+      const manualOnline = candidates
+        .filter((a) => !MANAGED_KINDS.has(a.kind))
+        .sort((x, y) => (x.pendingCount ?? 0) - (y.pendingCount ?? 0));
+      const pick = managedIdle[0] ?? manualOnline[0] ?? candidates[0];
+      if (pick) {
+        targets = [pick];
+        reason = managedIdle[0]
+          ? "主管自动分派：选择空闲托管成员（可立即执行）"
+          : "主管自动分派：选择当前最空闲的在线成员";
+      }
+    }
+    if (targets.length === 0) {
+      this.event({ type: "dispatch", text: `分派失败：没有可用成员（${input.title}）` });
+      return null;
+    }
+
+    const task = this.createTask({
+      title: input.title,
+      description: input.description ?? null,
+      createdBy: SUPERVISOR_NAME,
+      assigneeName: targets.length === 1 ? targets[0].name : null,
+    });
+    const mentions = targets.map((a) => `@${a.name}`).join(" ");
+    this.sendMessage({
+      fromName: SUPERVISOR_NAME,
+      text: `${mentions} 新任务「${input.title}」${input.description ? `：${input.description}` : ""}（任务ID: ${task.id}）。请认领并在完成后发布简报。${input.requestedBy ? `——由 ${input.requestedBy} 发起` : ""}`,
+      taskId: task.id,
+    });
+    this.event({
+      type: "dispatch",
+      text: `主管把「${truncate(input.title, 50)}」分派给 ${targets.map((a) => a.name).join("、")}（${reason}）`,
+    });
+    return { task, assignedTo: targets.map((a) => a.name), reason };
+  }
+
   // ---------- 上下文 ----------
 
   getContext(limitBriefs = 10) {
@@ -233,6 +344,7 @@ export class OfficeService {
         kind: a.kind,
         status: a.status,
         workspace: a.workspace,
+        model: (a.meta as { model?: string }).model ?? null,
       })),
       openTasks: this.store.listTasks().filter((t) => t.status !== "done" && t.status !== "cancelled"),
       briefs: this.store.listBriefs(limitBriefs),

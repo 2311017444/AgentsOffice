@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { OfficeService } from "../domain/office.js";
 import { sha1, shortId, truncate } from "../util.js";
 
@@ -22,10 +23,15 @@ export function handleCursorHook(
   const externalKey = `cursor:conv:${conversationId}`;
   const name = `cursor-${shortId(conversationId)}`;
 
+  const model =
+    (typeof payload.model_id === "string" && payload.model_id) ||
+    (typeof payload.model === "string" && payload.model) ||
+    undefined;
   const agent = office.store.upsertAgentBySession(externalKey, {
     name,
     kind: "cursor-ide",
     workspace,
+    meta: model ? { model } : undefined,
   });
 
   switch (eventName) {
@@ -45,11 +51,24 @@ export function handleCursorHook(
     case "beforeSubmitPrompt": {
       office.store.setAgentStatus(agent.id, "busy");
       const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
-      office.event({
-        type: "prompt",
-        agentId: agent.id,
-        text: `收到新指令：${truncate(prompt.replaceAll(/\s+/g, " "), 120)}`,
-      });
+      const excerpt = truncate(prompt.replaceAll(/\s+/g, " "), 120);
+      office.setActivity(agent.id, `处理指令：${excerpt}`);
+      office.event({ type: "prompt", agentId: agent.id, text: `收到新指令：${excerpt}` });
+      return {};
+    }
+    case "beforeShellExecution": {
+      const command = typeof payload.command === "string" ? payload.command : "";
+      if (command) {
+        office.setActivity(agent.id, `执行命令：${truncate(command.replaceAll(/\s+/g, " "), 100)}`);
+      }
+      // 只观察不表态，避免替用户放行命令（权限仍由 Cursor 自身策略决定）
+      return {};
+    }
+    case "afterFileEdit": {
+      const filePath = typeof payload.file_path === "string" ? payload.file_path : "";
+      if (filePath) {
+        office.setActivity(agent.id, `编辑文件：${filePath.split(/[\\/]/).slice(-2).join("/")}`);
+      }
       return {};
     }
     case "afterAgentResponse": {
@@ -71,6 +90,7 @@ export function handleCursorHook(
     }
     case "stop": {
       office.store.setAgentStatus(agent.id, "online");
+      office.setActivity(agent.id, null);
       const status = payload.status as string | undefined;
       office.event({
         type: "stop",
@@ -81,12 +101,127 @@ export function handleCursorHook(
     }
     case "sessionEnd": {
       office.store.setAgentStatus(agent.id, "offline");
+      office.setActivity(agent.id, null);
       office.event({ type: "leave", agentId: agent.id, text: "Cursor 会话下线" });
       return {};
     }
     default:
       return {};
   }
+}
+
+/**
+ * Claude Code hooks 摄入（事件名为大驼峰：SessionStart / UserPromptSubmit /
+ * PreToolUse / Stop / SessionEnd）。会话按 session_id 登记为 claude-xxxxxx。
+ * Stop 时从 transcript JSONL 中防御性提取最后一条助手消息作为兜底简报。
+ */
+export function handleClaudeHook(
+  office: OfficeService,
+  payload: Record<string, any>,
+  readTranscript: (path: string) => string | null = defaultReadTranscript,
+): Record<string, unknown> {
+  const eventName = payload.hook_event_name as string | undefined;
+  const sessionId = payload.session_id as string | undefined;
+  if (!eventName || !sessionId) return {};
+
+  const model =
+    (typeof payload.model === "string" && payload.model) || undefined;
+  const agent = office.store.upsertAgentBySession(`claude:session:${sessionId}`, {
+    name: `claude-${shortId(sessionId)}`,
+    kind: "claude-cli",
+    workspace: (payload.cwd as string) ?? null,
+    meta: { sessionId, ...(model ? { model } : {}) },
+  });
+
+  switch (eventName) {
+    case "SessionStart": {
+      office.event({ type: "join", agentId: agent.id, text: "Claude 会话上线" });
+      const pending = office.store.pendingCount(agent.id);
+      const lines = [
+        `[Agent Office] 本机运行着多 Agent 协作办公室（MCP 服务名 agent-office）。`,
+        `你的工号是「${agent.name}」。协作约定：`,
+        `1. 开始处理任务前调用 read_inbox(agent="${agent.name}") 查看 @你的消息；`,
+        `2. 完成阶段性工作后调用 publish_brief 发布简报；`,
+        `3. 需要其他成员协助时用 send_message 并 @对方工号。`,
+      ];
+      if (pending > 0) lines.push(`注意：你有 ${pending} 条未读消息，请先 read_inbox。`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: lines.join("\n"),
+        },
+      };
+    }
+    case "UserPromptSubmit": {
+      office.store.setAgentStatus(agent.id, "busy");
+      const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
+      const excerpt = truncate(prompt.replaceAll(/\s+/g, " "), 120);
+      office.setActivity(agent.id, `处理指令：${excerpt}`);
+      office.event({ type: "prompt", agentId: agent.id, text: `收到新指令：${excerpt}` });
+      return {};
+    }
+    case "PreToolUse": {
+      const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
+      if (tool) office.setActivity(agent.id, `使用工具：${tool}`);
+      return {};
+    }
+    case "Stop": {
+      office.store.setAgentStatus(agent.id, "online");
+      office.setActivity(agent.id, null);
+      const transcriptPath = payload.transcript_path as string | undefined;
+      const lastText = transcriptPath ? readTranscript(transcriptPath) : null;
+      if (lastText?.trim()) {
+        office.publishBrief({
+          agentName: agent.name,
+          kind: "auto",
+          source: "claude-hook",
+          brief: {
+            title: `工作回帧：${truncate(lastText.replaceAll(/\s+/g, " "), 48)}`,
+            result: lastText,
+          },
+          idempotencyKey: `claude:${sessionId}:${sha1(lastText)}`,
+        });
+      }
+      office.event({ type: "stop", agentId: agent.id, text: "一轮工作结束" });
+      return {};
+    }
+    case "SessionEnd": {
+      office.store.setAgentStatus(agent.id, "offline");
+      office.setActivity(agent.id, null);
+      office.event({ type: "leave", agentId: agent.id, text: "Claude 会话下线" });
+      return {};
+    }
+    default:
+      return {};
+  }
+}
+
+/** 从 Claude Code transcript JSONL 提取最后一条助手文本（格式不稳定，防御性解析） */
+function defaultReadTranscript(path: string): string | null {
+  try {
+    const lines = readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        const message = entry?.message ?? entry;
+        if ((entry?.type === "assistant" || message?.role === "assistant") && message?.content) {
+          const content = message.content;
+          if (typeof content === "string") return content;
+          if (Array.isArray(content)) {
+            const texts = content
+              .filter((b: any) => b?.type === "text" && typeof b.text === "string")
+              .map((b: any) => b.text);
+            if (texts.length > 0) return texts.join("\n");
+          }
+        }
+      } catch {
+        /* 跳过坏行 */
+      }
+    }
+  } catch {
+    /* transcript 不可读 */
+  }
+  return null;
 }
 
 /**
