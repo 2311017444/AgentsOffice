@@ -40,6 +40,25 @@ describe("Agent 改名与模型", () => {
     expect(office.renameAgent(b.id, { name: "a1" })).toBeNull();
   });
 
+  it("登记时带 model 写入 meta，重复登记不带 model 时保留旧值", () => {
+    const office = makeOffice();
+    office.store.registerAgent({
+      name: "cursor-a",
+      kind: "cursor-ide",
+      meta: { model: "gpt-5.6-sol" },
+    });
+    // 模拟下一轮 register_agent 未带 model
+    const again = office.store.registerAgent({ name: "cursor-a", kind: "cursor-ide" });
+    expect((again.meta as any).model).toBe("gpt-5.6-sol");
+    // 带新 model 时覆盖
+    const switched = office.store.registerAgent({
+      name: "cursor-a",
+      kind: "cursor-ide",
+      meta: { model: "claude-sonnet-5" },
+    });
+    expect((switched.meta as any).model).toBe("claude-sonnet-5");
+  });
+
   it("仅更新模型不改名", () => {
     const office = makeOffice();
     const agent = office.store.registerAgent({ name: "a1", kind: "cursor-ide" });

@@ -52,8 +52,8 @@ alwaysApply: true
 
 本机运行着多 Agent 协作办公室（MCP 服务名 \`agent-office\`，网页 http://127.0.0.1:${DEFAULT_PORT}）。
 
-1. 会话开始处理任务前，先调用 \`register_agent\` 登记（沿用系统注入的工号；若无则自拟简短工号）。
-2. 开始新一轮工作前调用 \`read_inbox\` 查看是否有 @你 的消息，优先响应同事的协作请求。
+1. 会话开始处理任务前，先调用 \`register_agent\` 登记（沿用系统注入的工号；若无则自拟简短工号；\`model\` 参数填你当前实际使用的 AI 模型名）。
+2. 开始新一轮工作前调用 \`read_inbox\` 查看是否有 @你 的消息，优先响应同事的协作请求；中途切换了模型就在 \`read_inbox\` 时带 \`model\` 参数更新。
 3. 完成阶段性工作后调用 \`publish_brief\` 发布结构化简报（结果/进展/决策/产物/阻塞/下一步）。
 4. 需要其他成员协助时用 \`send_message\` 并 @对方工号；\`get_context\` 可查看花名册、任务与最新简报。
 5. 认领任务用 \`claim_task\`，状态变化及时 \`update_task\`。
@@ -63,7 +63,7 @@ const AGENTS_MD_BLOCK = `## Agent Office 协作协议（Codex）
 
 本机运行着多 Agent 协作办公室（MCP 服务名 \`agent_office\`，网页 http://127.0.0.1:${DEFAULT_PORT}）。
 
-- 会话开始处理任务前，调用 \`register_agent\` 登记（kind 填 \`codex-cli\`，工号自拟且保持稳定，如 \`codex-主力\`）。
+- 会话开始处理任务前，调用 \`register_agent\` 登记（kind 填 \`codex-cli\`，工号自拟且保持稳定，如 \`codex-主力\`；\`model\` 填你当前使用的模型名）。
 - 每轮开始前调用 \`read_inbox\` 查看 @你 的消息；完成阶段性工作后调用 \`publish_brief\` 发布简报。
 - 需要其他成员（含 Cursor 中的 Agent）协助时，用 \`send_message\` 并 @对方工号；\`get_context\` 可查花名册与最新简报。`;
 

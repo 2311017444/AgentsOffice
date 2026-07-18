@@ -36,6 +36,10 @@ export function createMcpServer(office: OfficeService): McpServer {
             "你的类型：Cursor IDE 会话填 cursor-ide，Codex 终端填 codex-cli，Claude Code 填 claude-cli",
           ),
         workspace: z.string().optional().describe("你当前的工作目录"),
+        model: z
+          .string()
+          .optional()
+          .describe("你当前使用的 AI 模型名（如 gpt-5.6、claude-sonnet-5），会显示在工位卡片上"),
       },
     },
     async (args) => {
@@ -43,6 +47,7 @@ export function createMcpServer(office: OfficeService): McpServer {
         name: args.name,
         kind: args.kind,
         workspace: args.workspace ?? null,
+        meta: args.model?.trim() ? { model: args.model.trim() } : undefined,
       });
       office.event({ type: "join", agentId: agent.id, text: "登记入驻" });
       return text({
@@ -61,11 +66,18 @@ export function createMcpServer(office: OfficeService): McpServer {
       description: "读取 @你 的未读消息并标记为已读。开始新一轮工作前建议先调用。",
       inputSchema: {
         agent: z.string().describe("你的工号"),
+        model: z
+          .string()
+          .optional()
+          .describe("你当前使用的 AI 模型名，换了模型时带上以更新工位信息"),
       },
     },
     async (args) => {
       const result = office.readInbox(args.agent);
       if (!result) return text({ ok: false, error: `工号 ${args.agent} 未登记，请先 register_agent` });
+      if (args.model?.trim()) {
+        office.store.updateAgentMeta(result.agent.id, { model: args.model.trim() });
+      }
       return text({
         ok: true,
         count: result.messages.length,
