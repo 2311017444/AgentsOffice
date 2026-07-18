@@ -327,6 +327,11 @@ export class OfficeStore {
       .run(status, now(), agentId);
   }
 
+  /** 只改状态、不刷新 last_seen_at（闲置清扫用，避免把"最后活跃"顶掉） */
+  setAgentStatusQuiet(agentId: string, status: AgentStatus): void {
+    this.db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, agentId);
+  }
+
   /** 改名（工号唯一）；冲突时返回 null */
   renameAgent(agentId: string, newName: string): AgentCard | null {
     const existing = this.getAgentByName(newName);

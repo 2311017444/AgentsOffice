@@ -381,6 +381,25 @@ export class OfficeService {
     this.emit("history", { agentId });
   }
 
+  /**
+   * 闲置清扫：手工会话（Cursor/Codex/Claude）超过 idleMs 没有任何动静就标记离席，
+   * 避免早已关闭的会话一直显示"在席"，让人误以为 @它 会有响应。
+   */
+  sweepIdleSessions(idleMs = 30 * 60_000): number {
+    const cutoff = Date.now() - idleMs;
+    const sessionKinds = new Set(["cursor-ide", "codex-cli", "claude-cli"]);
+    let swept = 0;
+    for (const agent of this.store.listAgents()) {
+      if (!sessionKinds.has(agent.kind)) continue;
+      if (agent.status === "offline") continue;
+      if ((agent.lastSeenAt ?? 0) >= cutoff) continue;
+      this.store.setAgentStatusQuiet(agent.id, "offline");
+      this.emit("agent", { agentId: agent.id });
+      swept += 1;
+    }
+    return swept;
+  }
+
   /** 记录实时活动（不落 events 表，避免刷屏；经 SSE 推送） */
   setActivity(agentId: string, activity: string | null): void {
     this.store.setAgentActivity(agentId, activity);

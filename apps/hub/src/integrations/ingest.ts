@@ -17,6 +17,16 @@ export function handleCursorHook(
   if (!eventName) return {};
   if (!conversationId) return {};
 
+  // 托管 Cursor 工位自身的运行也会触发 hooks，识别后跳过，避免登记出重复员工
+  const managedTwin = office.store
+    .listAgents()
+    .find(
+      (a) =>
+        a.kind === "cursor-managed" &&
+        (a.meta as { cursorAgentId?: string }).cursorAgentId === conversationId,
+    );
+  if (managedTwin) return {};
+
   const workspace: string | null = Array.isArray(payload.workspace_roots)
     ? (payload.workspace_roots[0] ?? null)
     : null;
@@ -129,6 +139,17 @@ export function handleClaudeHook(
   const eventName = payload.hook_event_name as string | undefined;
   const sessionId = payload.session_id as string | undefined;
   if (!eventName || !sessionId) return {};
+
+  // 托管 Claude 工位跑 claude -p 时也会触发这些 hooks，识别后跳过，
+  // 否则注入词会引导它再 register_agent 一个 claude-xxxxxx 重复员工
+  const managedTwin = office.store
+    .listAgents()
+    .find(
+      (a) =>
+        a.kind === "claude-managed" &&
+        (a.meta as { sessionId?: string }).sessionId === sessionId,
+    );
+  if (managedTwin) return {};
 
   const model =
     (typeof payload.model === "string" && payload.model) || undefined;
@@ -252,6 +273,20 @@ export function handleCodexNotify(
   const lastMessage = (payload["last-assistant-message"] ??
     payload.last_assistant_message ??
     "") as string;
+
+  // 托管 Codex 工位跑 codex exec 时同样会触发 notify，识别后跳过：
+  // 托管调度器自己会回帖简报，这里再登记就成了重复员工
+  const managedTwin = office.store
+    .listAgents()
+    .find(
+      (a) =>
+        a.kind === "codex-managed" &&
+        (a.meta as { threadId?: string }).threadId === threadId,
+    );
+  if (managedTwin) {
+    office.store.setAgentStatus(managedTwin.id, "online");
+    return { ok: true };
+  }
 
   const agent = office.store.upsertAgentBySession(`codex:thread:${threadId}`, {
     name: `codex-${shortId(threadId)}`,

@@ -11,10 +11,12 @@ export interface TurnResult {
   usage?: number;
 }
 
-/** 托管执行的旁路通道：实时终端行 + 可终止句柄 */
+/** 托管执行的旁路通道：实时终端行 + 可终止句柄 + 关键 meta 早期持久化 */
 export interface TurnIO {
   term: (text: string, kind?: TermLineKind) => void;
   registerKill?: (kill: () => void) => void;
+  /** 线程/会话 ID 一出现就立刻落库（防止 notify/hooks 比运行结束先到，登记出重复员工） */
+  meta?: (patch: Record<string, unknown>) => void;
 }
 
 const NOOP_IO: TurnIO = { term: () => {} };
@@ -132,6 +134,7 @@ export async function runCodexTurn(
       }
       if (event?.type === "thread.started" && typeof event.thread_id === "string") {
         threadId = event.thread_id;
+        io.meta?.({ threadId });
       }
       if (event?.type === "turn.completed" && event.usage) {
         const u = event.usage;
@@ -196,7 +199,10 @@ export async function runClaudeTurn(
         return;
       }
       if (event?.type === "system" && event.subtype === "init") {
-        if (typeof event.session_id === "string") sessionId = event.session_id;
+        if (typeof event.session_id === "string") {
+          sessionId = event.session_id;
+          io.meta?.({ sessionId });
+        }
         if (typeof event.model === "string") model = event.model;
         io.term(`会话就绪${model ? `（${model}）` : ""}`, "info");
         return;
@@ -268,6 +274,7 @@ export async function runCursorTurn(
   const sdkAgent = meta.cursorAgentId
     ? await Agent.resume(meta.cursorAgentId, { apiKey })
     : await Agent.create(options);
+  io.meta?.({ cursorAgentId: sdkAgent.agentId });
   try {
     const run = await sdkAgent.send(prompt);
     const result = await run.wait();
@@ -340,6 +347,7 @@ export function createManagedDispatcher(
       const io: TurnIO = {
         term: (text, kind) => office.terminals.push(agent.id, text, kind),
         registerKill: (kill) => office.registerRunKill(agent.id, kill),
+        meta: (patch) => store.updateAgentMeta(agent.id, patch),
       };
       try {
         const runner = resolveRunner(agent.kind);

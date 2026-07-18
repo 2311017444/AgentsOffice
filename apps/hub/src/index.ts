@@ -20,7 +20,12 @@ async function main(): Promise<void> {
   console.log(`[agent-office] MCP 端点：http://127.0.0.1:${config.port}/mcp`);
   console.log(`[agent-office] 数据目录：${config.dataDir}`);
 
+  // 手工会话闲置 30 分钟自动标记离席
+  office.sweepIdleSessions();
+  const sweeper = setInterval(() => office.sweepIdleSessions(), 60_000);
+
   const shutdown = async () => {
+    clearInterval(sweeper);
     await app.close();
     store.close();
     process.exit(0);
