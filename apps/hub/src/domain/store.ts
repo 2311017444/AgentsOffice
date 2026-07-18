@@ -171,6 +171,12 @@ export class OfficeStore {
     } catch {
       /* 列已存在 */
     }
+    // 旧库迁移：消息附图（URL 数组）
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN images TEXT NOT NULL DEFAULT '[]'");
+    } catch {
+      /* 列已存在 */
+    }
     // 旧库迁移：单组时代的 agents.group_id 搬进多对多关系表后废弃
     try {
       this.db.exec(
@@ -526,6 +532,7 @@ export class OfficeStore {
     mentionAgentIds: string[];
     taskId?: string | null;
     channel?: string;
+    images?: string[];
   }): string {
     const id = uuid();
     const fromName = input.fromAgentId
@@ -533,8 +540,8 @@ export class OfficeStore {
       : null;
     this.db
       .prepare(
-        `INSERT INTO messages(id, from_agent_id, from_name, text, mentions, task_id, channel, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO messages(id, from_agent_id, from_name, text, mentions, task_id, channel, images, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -544,6 +551,7 @@ export class OfficeStore {
         JSON.stringify(input.mentionAgentIds),
         input.taskId ?? null,
         input.channel ?? "hall",
+        JSON.stringify(input.images ?? []),
         now(),
       );
     const stmt = this.db.prepare(
@@ -556,7 +564,7 @@ export class OfficeStore {
   listMessages(limit = 100): OfficeMessage[] {
     const rows = this.db
       .prepare(
-        `SELECT m.id, m.from_agent_id, m.text, m.mentions, m.task_id, m.channel, m.created_at,
+        `SELECT m.id, m.from_agent_id, m.text, m.mentions, m.task_id, m.channel, m.images, m.created_at,
                 COALESCE(a.name, m.from_name) AS from_name FROM messages m
          LEFT JOIN agents a ON a.id = m.from_agent_id
          ORDER BY m.created_at DESC LIMIT ?`,
@@ -569,6 +577,7 @@ export class OfficeStore {
       mentions: string;
       task_id: string | null;
       channel: string;
+      images: string;
       created_at: number;
     }>;
     const deliveryStmt = this.db.prepare(
@@ -583,6 +592,7 @@ export class OfficeStore {
       mentions: JSON.parse(row.mentions) as string[],
       taskId: row.task_id,
       channel: row.channel ?? "hall",
+      images: JSON.parse(row.images ?? "[]") as string[],
       createdAt: row.created_at,
       deliveries: (deliveryStmt.all(row.id) as unknown as Array<{
         status: "pending" | "read";
@@ -597,28 +607,30 @@ export class OfficeStore {
     text: string;
     taskId: string | null;
     channel: string;
+    images: string[];
     createdAt: number;
   }> {
-    return (
-      this.db
-        .prepare(
-          `SELECT m.id AS messageId, COALESCE(a.name, m.from_name, '系统') AS fromName,
-                  m.text, m.task_id AS taskId, m.channel AS channel, m.created_at AS createdAt
-           FROM deliveries d
-           JOIN messages m ON m.id = d.message_id
-           LEFT JOIN agents a ON a.id = m.from_agent_id
-           WHERE d.to_agent_id = ? AND d.status = 'pending'
-           ORDER BY m.created_at ASC`,
-        )
-        .all(agentId) as unknown as Array<{
-        messageId: string;
-        fromName: string;
-        text: string;
-        taskId: string | null;
-        channel: string;
-        createdAt: number;
-      }>
-    );
+    const rows = this.db
+      .prepare(
+        `SELECT m.id AS messageId, COALESCE(a.name, m.from_name, '系统') AS fromName,
+                m.text, m.task_id AS taskId, m.channel AS channel, m.images AS images,
+                m.created_at AS createdAt
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         LEFT JOIN agents a ON a.id = m.from_agent_id
+         WHERE d.to_agent_id = ? AND d.status = 'pending'
+         ORDER BY m.created_at ASC`,
+      )
+      .all(agentId) as unknown as Array<{
+      messageId: string;
+      fromName: string;
+      text: string;
+      taskId: string | null;
+      channel: string;
+      images: string;
+      createdAt: number;
+    }>;
+    return rows.map((r) => ({ ...r, images: JSON.parse(r.images ?? "[]") as string[] }));
   }
 
   markDeliveriesRead(agentId: string, messageIds?: string[]): number {

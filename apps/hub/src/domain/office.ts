@@ -8,6 +8,8 @@ import {
   type OfficeGroup,
   type TaskStatus,
 } from "@agent-office/protocol";
+import { existsSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { OfficeBus } from "./bus.js";
 import { LogBook } from "./logbook.js";
 import type { OfficeStore } from "./store.js";
@@ -23,6 +25,8 @@ export type ManagedDispatcher = (
     raw?: boolean;
     /** 回复要落回的频道（hall 或项目组 ID） */
     channel?: string;
+    /** 附图 URL（/files/xxx），派发时解析成本地路径注入提示词 */
+    images?: string[];
   },
 ) => void;
 
@@ -40,6 +44,8 @@ export class OfficeService {
   private runKills = new Map<string, () => void>();
   readonly terminals: TerminalLog;
   readonly logs: LogBook;
+  /** 上传目录（服务器启动时注入），用于把附图 URL 解析成本地绝对路径 */
+  uploadsDir: string | null = null;
 
   constructor(
     readonly store: OfficeStore,
@@ -65,6 +71,14 @@ export class OfficeService {
     if (!store.getAgentByName(SUPERVISOR_NAME)) {
       store.registerAgent({ name: SUPERVISOR_NAME, kind: "supervisor", status: "online" });
     }
+  }
+
+  /** 附图 URL（/files/xxx）→ 本地绝对路径；只认 uploads 目录下真实存在的文件 */
+  resolveImagePaths(urls: string[] | undefined): string[] {
+    if (!urls || urls.length === 0 || !this.uploadsDir) return [];
+    return urls
+      .map((u) => join(this.uploadsDir!, basename(u)))
+      .filter((p) => existsSync(p));
   }
 
   /** boss（人类用户）的当前称呼 */
@@ -103,6 +117,8 @@ export class OfficeService {
     taskId?: string | null;
     /** 频道：hall（默认大群）或项目组 ID */
     channel?: string;
+    /** 附图 URL（/files/xxx） */
+    images?: string[];
   }): {
     messageId: string;
     routed: Array<{ name: string; mode: "managed" | "inbox" | "supervisor" }>;
@@ -139,6 +155,7 @@ export class OfficeService {
       mentionAgentIds: [...targetAgents.keys()],
       taskId: input.taskId ?? null,
       channel,
+      images: input.images,
     });
     this.logs.append({
       source: "message",
@@ -167,6 +184,7 @@ export class OfficeService {
           text: input.text,
           taskId: input.taskId ?? null,
           channel,
+          images: input.images,
         });
       } else {
         routed.push({ name: agent.name, mode: "inbox" });
@@ -187,7 +205,15 @@ export class OfficeService {
 
   readInbox(agentName: string): {
     agent: AgentCard;
-    messages: Array<{ messageId: string; fromName: string; text: string; taskId: string | null; createdAt: number }>;
+    messages: Array<{
+      messageId: string;
+      fromName: string;
+      text: string;
+      taskId: string | null;
+      channel: string;
+      images: string[];
+      createdAt: number;
+    }>;
   } | null {
     const agent = this.store.getAgentByName(agentName);
     if (!agent) return null;
@@ -452,6 +478,7 @@ export class OfficeService {
         fromName: this.bossName(),
         text: `你离席期间收到以下消息，请逐条处理并汇报结果：\n${backlog}`,
         channel: pending[pending.length - 1].channel,
+        images: pending.flatMap((m) => m.images),
       });
     }
     this.emit("agent", { agentId });
@@ -482,6 +509,7 @@ export class OfficeService {
           text: only.text,
           taskId: only.taskId,
           channel: only.channel,
+          images: only.images,
         });
       } else {
         const backlog = pending.map((m) => `- ${m.fromName}：${m.text}`).join("\n");
@@ -489,6 +517,7 @@ export class OfficeService {
           fromName: this.bossName(),
           text: `办公室重启前你有以下未处理消息，请逐条处理并汇报结果：\n${backlog}`,
           channel: pending[pending.length - 1].channel,
+          images: pending.flatMap((m) => m.images),
         });
       }
       recovered += 1;
@@ -501,7 +530,11 @@ export class OfficeService {
    * 用于精细化调整某个终端；对有续聊凭证的手工会话（codex-cli/claude-cli）输入即激活续聊。
    * 结果只回显在终端/历史里，不进群、不发简报。
    */
-  directInput(agentId: string, text: string): { ok: boolean; error?: string } {
+  directInput(
+    agentId: string,
+    text: string,
+    images?: string[],
+  ): { ok: boolean; error?: string } {
     const trimmed = text.trim();
     if (!trimmed) return { ok: false, error: "输入内容为空" };
     const agent = this.store.getAgentById(agentId);
@@ -518,7 +551,12 @@ export class OfficeService {
       };
     }
     if (!this.managedDispatcher) return { ok: false, error: "托管调度器未就绪" };
-    this.managedDispatcher(agent, { fromName: this.bossName(), text: trimmed, raw: true });
+    this.managedDispatcher(agent, {
+      fromName: this.bossName(),
+      text: trimmed,
+      raw: true,
+      images,
+    });
     return { ok: true };
   }
 

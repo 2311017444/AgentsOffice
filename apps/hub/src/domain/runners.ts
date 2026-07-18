@@ -25,6 +25,8 @@ export type TurnRunner = (
   agent: AgentCard,
   prompt: string,
   io?: TurnIO,
+  /** 附图本地路径：Codex 经 -i 作为真视觉输入；Claude/Cursor 靠提示词里的路径用 Read 工具看图 */
+  images?: string[],
 ) => Promise<TurnResult>;
 
 /** 全局并发闸门：限制同时运行的托管回合数，避免几十个 CLI 子进程挤爆机器 */
@@ -73,7 +75,11 @@ export class RunQueue {
  * 注意：`codex exec resume` 子命令不接受 --sandbox / -C（会退出码 2），
  * 沙箱改用 -c sandbox_mode=... 传入；工作目录沿用会话记录。
  */
-export function buildCodexExecArgs(meta: { threadId?: string; sandbox?: string }, workspace: string | null): string[] {
+export function buildCodexExecArgs(
+  meta: { threadId?: string; sandbox?: string },
+  workspace: string | null,
+  images: string[] = [],
+): string[] {
   const sandbox = meta.sandbox === "workspace-write" ? "workspace-write" : "read-only";
   const args = ["exec"];
   if (meta.threadId) {
@@ -85,6 +91,8 @@ export function buildCodexExecArgs(meta: { threadId?: string; sandbox?: string }
     args.push("--sandbox", sandbox);
     if (workspace) args.push("-C", workspace);
   }
+  // 附图作为真视觉输入（exec 与 resume 都支持 -i）
+  for (const img of images) args.push("-i", img);
   args.push("-");
   return args;
 }
@@ -140,9 +148,10 @@ export async function runCodexTurn(
   prompt: string,
   config: OfficeConfig,
   io: TurnIO = NOOP_IO,
+  images: string[] = [],
 ): Promise<TurnResult> {
   const meta = agent.meta as { threadId?: string; sandbox?: string };
-  const args = buildCodexExecArgs(meta, agent.workspace);
+  const args = buildCodexExecArgs(meta, agent.workspace, images);
 
   let threadId: string | undefined;
   let lastAgentMessage = "";
@@ -339,7 +348,9 @@ export function createManagedDispatcher(
   // 直连输入也会打到 codex-cli / claude-cli（凭 threadId/sessionId 续聊），按前缀路由
   const resolveRunner = (kind: string): TurnRunner => {
     if (kind.startsWith("codex")) {
-      return runners?.["codex-managed"] ?? ((a, p, io) => runCodexTurn(a, p, config, io));
+      return (
+        runners?.["codex-managed"] ?? ((a, p, io, imgs) => runCodexTurn(a, p, config, io, imgs))
+      );
     }
     if (kind.startsWith("claude")) {
       return runners?.["claude-managed"] ?? ((a, p, io) => runClaudeTurn(a, p, config, io));
@@ -355,6 +366,7 @@ export function createManagedDispatcher(
       taskId?: string | null;
       raw?: boolean;
       channel?: string;
+      images?: string[];
     },
   ) => {
     void queue.enqueue(agent.id, async () => {
@@ -371,20 +383,26 @@ export function createManagedDispatcher(
         agentId: agent.id,
         text: message.raw ? "收到终端直连输入，开始执行" : "收到 @消息，开始执行",
       });
+      const imagePaths = office.resolveImagePaths(message.images);
       office.terminals.push(
         agent.id,
-        message.raw
-          ? `❯ ${truncate(message.text.replaceAll(/\s+/g, " "), 500)}`
-          : `→ ${message.fromName}：${truncate(message.text.replaceAll(/\s+/g, " "), 200)}`,
+        `${
+          message.raw
+            ? `❯ ${truncate(message.text.replaceAll(/\s+/g, " "), 500)}`
+            : `→ ${message.fromName}：${truncate(message.text.replaceAll(/\s+/g, " "), 200)}`
+        }${imagePaths.length > 0 ? `（附图 ${imagePaths.length} 张）` : ""}`,
         "cmd",
       );
       // 直连输入原样透传（精细化调整）；@消息才包装办公室提示词模板
       const prompt = message.raw
-        ? message.text
+        ? imagePaths.length > 0
+          ? `${message.text}\n\n[附图，本地文件，请先用图片查看工具（Read / view_image）打开]\n${imagePaths.join("\n")}`
+          : message.text
         : buildManagedPrompt({
             agentName: agent.name,
             senderName: message.fromName,
             text: message.text,
+            imagePaths,
             contextBriefs: store.listBriefs(5).map((b) => ({
               agentName: b.agentName,
               title: b.title,
@@ -398,7 +416,7 @@ export function createManagedDispatcher(
       };
       try {
         const runner = resolveRunner(agent.kind);
-        const result = await runner(agent, prompt, io);
+        const result = await runner(agent, prompt, io, imagePaths);
         if (result.meta && Object.keys(result.meta).length > 0) {
           store.updateAgentMeta(agent.id, result.meta);
         }

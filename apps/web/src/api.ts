@@ -52,12 +52,29 @@ async function json<T>(res: Response): Promise<T> {
 export const api = {
   state: () => fetch("/api/state").then((r) => json<OfficeState>(r)),
   health: () => fetch("/api/health").then((r) => json<Health>(r)),
-  sendMessage: (text: string, channel?: string) =>
+  sendMessage: (text: string, channel?: string, images?: string[]) =>
     fetch("/api/messages", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, channel }),
+      body: JSON.stringify({ text, channel, images }),
     }).then((r) => json<{ routed: Array<{ name: string; mode: string }> }>(r)),
+  /** 上传图片（base64），返回 /files/xxx 的 URL */
+  uploadImage: async (file: File) => {
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.slice(result.indexOf(",") + 1));
+      };
+      reader.onerror = () => reject(new Error("读取图片失败"));
+      reader.readAsDataURL(file);
+    });
+    return fetch("/api/uploads", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mime: file.type, data }),
+    }).then((r) => json<{ ok: boolean; url: string }>(r));
+  },
   createGroup: (name: string) =>
     fetch("/api/groups", {
       method: "POST",
@@ -105,11 +122,11 @@ export const api = {
     fetch(`/api/agents/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
   promoteAgent: (id: string) =>
     fetch(`/api/agents/${id}/promote`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
-  terminalInput: (id: string, text: string) =>
+  terminalInput: (id: string, text: string, images?: string[]) =>
     fetch(`/api/agents/${id}/input`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, images }),
     }).then((r) => json<{ ok: boolean }>(r)),
   generateAvatar: (id: string, style?: string) =>
     fetch(`/api/agents/${id}/avatar`, {

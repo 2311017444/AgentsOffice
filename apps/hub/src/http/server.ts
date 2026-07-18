@@ -1,9 +1,10 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { uuid } from "../util.js";
 import type { OfficeConfig } from "../config.js";
 import { generateAvatar } from "../domain/avatar.js";
 import type { OfficeService } from "../domain/office.js";
@@ -21,7 +22,13 @@ export async function createServer(
   office: OfficeService,
   config: OfficeConfig,
 ): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  // bodyLimit 放宽以支持 base64 图片上传（约 20MB 原图）
+  const app = Fastify({ logger: false, bodyLimit: 30 * 1024 * 1024 });
+
+  // 上传目录：附图落盘在数据目录下，经 /files/ 对外提供
+  const uploadsDir = join(config.dataDir, "uploads");
+  mkdirSync(uploadsDir, { recursive: true });
+  office.uploadsDir = uploadsDir;
 
   // ---------- MCP（无状态 Streamable HTTP） ----------
   app.post("/mcp", async (request, reply) => {
@@ -78,14 +85,54 @@ export async function createServer(
   }));
 
   app.post("/api/messages", async (request, reply) => {
-    const body = (request.body ?? {}) as { text?: string; from?: string; channel?: string };
-    if (!body.text?.trim()) return reply.code(400).send({ error: "text 不能为空" });
+    const body = (request.body ?? {}) as {
+      text?: string;
+      from?: string;
+      channel?: string;
+      images?: string[];
+    };
+    const images = Array.isArray(body.images)
+      ? body.images.filter((u) => typeof u === "string" && u.startsWith("/files/"))
+      : [];
+    if (!body.text?.trim() && images.length === 0) {
+      return reply.code(400).send({ error: "text 不能为空" });
+    }
     const result = office.sendMessage({
       fromName: body.from?.trim() || office.bossName(),
-      text: body.text.trim(),
+      text: body.text?.trim() || "（图片）",
       channel: body.channel,
+      images,
     });
     return result;
+  });
+
+  // ---------- 附图上传（JSON base64，落盘到数据目录 uploads/） ----------
+  const IMAGE_EXT: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+  };
+  app.post("/api/uploads", async (request, reply) => {
+    const body = (request.body ?? {}) as { mime?: string; data?: string };
+    const ext = body.mime ? IMAGE_EXT[body.mime] : undefined;
+    if (!ext) return reply.code(400).send({ error: "只支持 png / jpeg / gif / webp 图片" });
+    if (typeof body.data !== "string" || body.data.length === 0) {
+      return reply.code(400).send({ error: "data（base64）不能为空" });
+    }
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(body.data, "base64");
+    } catch {
+      return reply.code(400).send({ error: "base64 解码失败" });
+    }
+    if (buffer.length === 0) return reply.code(400).send({ error: "图片内容为空" });
+    if (buffer.length > 20 * 1024 * 1024) {
+      return reply.code(400).send({ error: "图片超过 20MB 上限" });
+    }
+    const name = `${uuid()}.${ext}`;
+    writeFileSync(join(uploadsDir, name), buffer);
+    return { ok: true, url: `/files/${name}` };
   });
 
   // ---------- 项目组 ----------
@@ -208,11 +255,14 @@ export async function createServer(
   // 终端直连输入：原样透传到底层会话（不套办公室提示词）
   app.post("/api/agents/:id/input", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = (request.body ?? {}) as { text?: string };
+    const body = (request.body ?? {}) as { text?: string; images?: string[] };
     if (typeof body.text !== "string" || !body.text.trim()) {
       return reply.code(400).send({ error: "text 不能为空" });
     }
-    const result = office.directInput(id, body.text);
+    const images = Array.isArray(body.images)
+      ? body.images.filter((u) => typeof u === "string" && u.startsWith("/files/"))
+      : undefined;
+    const result = office.directInput(id, body.text, images);
     if (!result.ok) return reply.code(400).send({ error: result.error });
     return { ok: true };
   });
@@ -388,6 +438,13 @@ export async function createServer(
       clearInterval(heartbeat);
       unsubscribe();
     });
+  });
+
+  // ---------- 附图静态服务 ----------
+  await app.register(fastifyStatic, {
+    root: uploadsDir,
+    prefix: "/files/",
+    decorateReply: false,
   });
 
   // ---------- 网页静态资源 ----------

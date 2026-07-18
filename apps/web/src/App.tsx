@@ -672,7 +672,26 @@ function Composer({
   const [hint, setHint] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [selected, setSelected] = useState(0);
+  const [images, setImages] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const addImages = async (files: Iterable<File>) => {
+    const list = [...files].filter((f) => f.type.startsWith("image/"));
+    if (list.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of list) {
+        const { url } = await api.uploadImage(file);
+        setImages((prev) => [...prev, url]);
+      }
+    } catch (e) {
+      setHint({ text: `图片上传失败：${e instanceof Error ? e.message : String(e)}`, kind: "err" });
+    } finally {
+      setUploading(false);
+    }
+  };
 
   useEffect(() => {
     if (prefill) {
@@ -708,9 +727,9 @@ function Composer({
   };
 
   const send = async () => {
-    if (!text.trim()) return;
+    if ((!text.trim() && images.length === 0) || uploading) return;
     try {
-      const result = await api.sendMessage(text.trim(), channel);
+      const result = await api.sendMessage(text.trim(), channel, images);
       const managed = result.routed.filter((r) => r.mode === "managed").map((r) => r.name);
       const inbox = result.routed.filter((r) => r.mode === "inbox").map((r) => r.name);
       const supervisor = result.routed.some((r) => r.mode === "supervisor");
@@ -720,6 +739,7 @@ function Composer({
       if (inbox.length > 0) parts.push(`已入 ${inbox.join("、")} 的收件箱（下轮读取）`);
       setHint({ text: parts.join("；") || "已发送", kind: "ok" });
       setText("");
+      setImages([]);
       onSent();
       setTimeout(() => setHint(null), 5000);
     } catch (e) {
@@ -748,11 +768,63 @@ function Composer({
         </ul>
       )}
       {hint && <div className={`composer-toast ${hint.kind}`}>{hint.text}</div>}
+      {images.length > 0 && (
+        <div className="composer-images">
+          {images.map((url) => (
+            <span key={url} className="composer-image">
+              <img src={url} alt="附图" />
+              <button
+                title="移除该图"
+                onClick={() => setImages((prev) => prev.filter((x) => x !== url))}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          {uploading && <span className="composer-uploading">上传中…</span>}
+        </div>
+      )}
       <div className="composer-box">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) void addImages(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          className="attach-btn"
+          title="添加图片（也可以直接粘贴/拖入）"
+          disabled={uploading}
+          onClick={() => fileRef.current?.click()}
+        >
+          🖼
+        </button>
         <textarea
           ref={inputRef}
           value={text}
           rows={2}
+          onPaste={(e) => {
+            const files = [...e.clipboardData.items]
+              .filter((item) => item.kind === "file")
+              .map((item) => item.getAsFile())
+              .filter((f): f is File => Boolean(f));
+            if (files.length > 0) {
+              e.preventDefault();
+              void addImages(files);
+            }
+          }}
+          onDrop={(e) => {
+            if (e.dataTransfer.files.length > 0) {
+              e.preventDefault();
+              void addImages(e.dataTransfer.files);
+            }
+          }}
+          onDragOver={(e) => e.preventDefault()}
           placeholder={
             channel === "hall"
               ? "给大群发消息：@工号 呼叫成员，@主管 自动分派，@all 全员……"
@@ -793,13 +865,13 @@ function Composer({
         <button
           className="send-btn"
           onClick={() => void send()}
-          disabled={!text.trim()}
+          disabled={(!text.trim() && images.length === 0) || uploading}
           title="发送（Enter）"
         >
           发送
         </button>
       </div>
-      <div className="composer-hint">Enter 发送 · Shift+Enter 换行 · @ 呼叫成员</div>
+      <div className="composer-hint">Enter 发送 · Shift+Enter 换行 · @ 呼叫成员 · 粘贴/拖入图片</div>
     </div>
   );
 }
@@ -1373,6 +1445,15 @@ function Feed({ state, channel }: { state: OfficeState; channel: string }) {
                 <time>{clockTime(m.createdAt)}</time>
               </div>
               <div className="msg-bubble">{highlightMentions(m.text)}</div>
+              {(m.images?.length ?? 0) > 0 && (
+                <div className="msg-images">
+                  {m.images!.map((url) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer" title="点击看原图">
+                      <img src={url} alt="附图" loading="lazy" />
+                    </a>
+                  ))}
+                </div>
+              )}
               {m.deliveries.length > 0 && (
                 <div className="msg-deliveries">
                   {m.deliveries.map((d) => (

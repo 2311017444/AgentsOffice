@@ -81,12 +81,18 @@ export function createMcpServer(office: OfficeService): McpServer {
       return text({
         ok: true,
         count: result.messages.length,
-        messages: result.messages.map((m) => ({
-          from: m.fromName,
-          text: m.text,
-          taskId: m.taskId,
-          at: new Date(m.createdAt).toISOString(),
-        })),
+        messages: result.messages.map((m) => {
+          const imagePaths = office.resolveImagePaths(m.images);
+          return {
+            from: m.fromName,
+            text: m.text,
+            taskId: m.taskId,
+            at: new Date(m.createdAt).toISOString(),
+            ...(imagePaths.length > 0
+              ? { images: imagePaths, imagesHint: "附图本地路径，请用图片查看工具打开" }
+              : {}),
+          };
+        }),
       });
     },
   );

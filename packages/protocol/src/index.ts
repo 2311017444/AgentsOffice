@@ -55,6 +55,8 @@ export interface OfficeMessage {
   createdAt: number;
   /** 所属频道：hall（大群）或项目组 ID */
   channel: string;
+  /** 附图 URL（hub 的 /files/xxx，文件存在数据目录 uploads/ 下） */
+  images: string[];
   deliveries: Array<{ toName: string; status: "pending" | "read" }>;
 }
 
@@ -200,12 +202,21 @@ export function buildManagedPrompt(opts: {
   senderName: string;
   text: string;
   contextBriefs?: Array<{ agentName: string; title: string; result: string }>;
+  /** 附图的本地文件绝对路径（提示 Agent 用图片查看工具打开） */
+  imagePaths?: string[];
 }): string {
   const lines = [
     `[Agent Office] 你是协作办公室的成员「${opts.agentName}」。`,
     `来自「${opts.senderName}」的新消息：`,
     opts.text,
   ];
+  if (opts.imagePaths && opts.imagePaths.length > 0) {
+    lines.push(
+      "",
+      `对方附了 ${opts.imagePaths.length} 张图片（本地文件，请先用你的图片查看工具——Cursor/Claude 用 Read、Codex 用 view_image——打开看完再处理）：`,
+    );
+    for (const p of opts.imagePaths) lines.push(p);
+  }
   if (opts.contextBriefs && opts.contextBriefs.length > 0) {
     lines.push("", "办公室最近的简报（供参考）：");
     for (const b of opts.contextBriefs) {
