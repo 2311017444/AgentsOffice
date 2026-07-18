@@ -83,6 +83,69 @@ describe("托管孪生去重", () => {
   });
 });
 
+describe("唤醒离席员工（转托管）", () => {
+  it("codex-cli 带 threadId 可转托管，积压未读立即派发", async () => {
+    const office = makeOffice();
+    const dispatched: Array<{ name: string; text: string }> = [];
+    office.setManagedDispatcher((agent, message) =>
+      dispatched.push({ name: agent.name, text: message.text }),
+    );
+    const agent = office.store.registerAgent({
+      name: "codex-主力",
+      kind: "codex-cli",
+      meta: { threadId: "t-1" },
+    });
+    office.sendMessage({ fromName: "老板", text: "@codex-主力 你人呢" });
+    office.store.setAgentStatusQuiet(agent.id, "offline");
+
+    const result = office.promoteAgent(agent.id);
+    expect(result.ok).toBe(true);
+    const fresh = office.store.getAgentById(agent.id)!;
+    expect(fresh.kind).toBe("codex-managed");
+    expect(fresh.status).toBe("online");
+    expect((fresh.meta as any).threadId).toBe("t-1");
+    // 积压消息被立即派发且收件箱清空
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].text).toContain("你人呢");
+    expect(office.store.pendingCount(agent.id)).toBe(0);
+  });
+
+  it("claude-cli 带 sessionId 可转托管；cursor-ide 与无凭证的拒绝", () => {
+    const office = makeOffice();
+    const claude = office.store.registerAgent({
+      name: "claude-git库管理",
+      kind: "claude-cli",
+      meta: { sessionId: "s-1" },
+    });
+    expect(office.promoteAgent(claude.id).ok).toBe(true);
+    expect(office.store.getAgentById(claude.id)!.kind).toBe("claude-managed");
+
+    const cursor = office.store.registerAgent({ name: "cursor-x", kind: "cursor-ide" });
+    const cursorResult = office.promoteAgent(cursor.id);
+    expect(cursorResult.ok).toBe(false);
+    expect(cursorResult.error).toContain("Cursor");
+
+    const bare = office.store.registerAgent({ name: "codex-裸", kind: "codex-cli" });
+    expect(office.promoteAgent(bare.id).ok).toBe(false);
+  });
+
+  it("转托管后原会话的 notify 被识别为孪生，不再登记重复员工", () => {
+    const office = makeOffice();
+    const agent = office.store.registerAgent({
+      name: "codex-主力",
+      kind: "codex-cli",
+      meta: { threadId: "t-1" },
+    });
+    office.promoteAgent(agent.id);
+    handleCodexNotify(office, {
+      type: "agent-turn-complete",
+      "thread-id": "t-1",
+      "last-assistant-message": "人类在原终端里又敲了一轮",
+    });
+    expect(office.store.listAgents().filter((a) => a.name.startsWith("codex-")).length).toBe(1);
+  });
+});
+
 describe("闲置清扫", () => {
   it("超过阈值的手工会话标记离席，托管/在期会话不动", () => {
     const office = makeOffice();

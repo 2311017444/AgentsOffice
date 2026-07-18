@@ -278,7 +278,28 @@ function AgentBadge({
     }
   };
 
+  const promote = async () => {
+    if (
+      !window.confirm(
+        `唤醒「${agent.name}」？将转为托管工位（沿用原会话续聊），之后 @它 即可直接执行；离席期间的未读消息会立即处理。`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api.promoteAgent(agent.id);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const m = meta(agent);
+  const promotable =
+    (agent.kind === "codex-cli" && Boolean(m.threadId)) ||
+    (agent.kind === "claude-cli" && Boolean(m.sessionId));
   const inboxOnly = agent.kind === "cursor-ide" || agent.kind === "codex-cli" || agent.kind === "claude-cli";
   return (
     <div className={`badge status-${agent.status}`}>
@@ -391,6 +412,16 @@ function AgentBadge({
           >
             ✎
           </button>
+          {promotable && (
+            <button
+              className="icon-btn promote"
+              title="唤醒：转为托管工位（沿用原会话续聊），离席积压的消息立即处理"
+              disabled={busy}
+              onClick={() => void promote()}
+            >
+              ⚡
+            </button>
+          )}
           {agent.kind !== "user" && agent.kind !== "supervisor" && (
             <button className="icon-btn" title="对话历史（终端视图）" onClick={() => setHistoryOpen(true)}>
               ≣

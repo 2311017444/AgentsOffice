@@ -347,6 +347,48 @@ export class OfficeService {
     return messageId;
   }
 
+  /**
+   * 唤醒离席的手工会话：凭续聊凭证（Codex threadId / Claude sessionId）
+   * 把它转成托管工位，之后 @它 就能由办公室直接拉起执行；
+   * 离席期间积压的未读消息会立即作为第一轮任务处理。
+   */
+  promoteAgent(agentId: string): { ok: boolean; error?: string; agent?: AgentCard } {
+    const agent = this.store.getAgentById(agentId);
+    if (!agent) return { ok: false, error: "成员不存在" };
+    const meta = agent.meta as { threadId?: string; sessionId?: string };
+    let newKind: "codex-managed" | "claude-managed";
+    if (agent.kind === "codex-cli" && meta.threadId) {
+      newKind = "codex-managed";
+    } else if (agent.kind === "claude-cli" && meta.sessionId) {
+      newKind = "claude-managed";
+    } else if (agent.kind === "cursor-ide") {
+      return { ok: false, error: "Cursor 会话无法从办公室唤醒，请回到 Cursor 里继续那个对话" };
+    } else {
+      return { ok: false, error: "该成员没有可续聊的会话凭证（threadId/sessionId），无法转托管" };
+    }
+    this.store.updateAgentKind(agentId, newKind);
+    this.store.setAgentStatus(agentId, "online");
+    this.event({
+      type: "join",
+      agentId,
+      text: `「${agent.name}」被唤醒并转为托管工位（沿用原会话续聊）`,
+    });
+
+    // 离席期间的未读立即作为第一轮任务派下去
+    const pending = this.store.pendingMessagesFor(agentId);
+    const fresh = this.store.getAgentById(agentId)!;
+    if (pending.length > 0 && this.managedDispatcher) {
+      this.store.markDeliveriesRead(agentId);
+      const backlog = pending.map((m) => `- ${m.fromName}：${m.text}`).join("\n");
+      this.managedDispatcher(fresh, {
+        fromName: this.bossName(),
+        text: `你离席期间收到以下消息，请逐条处理并汇报结果：\n${backlog}`,
+      });
+    }
+    this.emit("agent", { agentId });
+    return { ok: true, agent: fresh };
+  }
+
   // ---------- 托管运行控制 ----------
 
   registerRunKill(agentId: string, kill: () => void): void {

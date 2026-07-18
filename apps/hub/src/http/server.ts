@@ -165,6 +165,13 @@ export async function createServer(
     return { ok: true };
   });
 
+  app.post("/api/agents/:id/promote", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = office.promoteAgent(id);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    return { ok: true, agent: result.agent };
+  });
+
   app.post("/api/agents/:id/stop", async (request, reply) => {
     const { id } = request.params as { id: string };
     const agent = office.store.getAgentById(id);

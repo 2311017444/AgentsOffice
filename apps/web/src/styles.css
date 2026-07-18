@@ -1635,6 +1635,10 @@ button:focus-visible {
   color: var(--accent);
 }
 
+.icon-btn.promote {
+  color: var(--busy);
+}
+
 .terminal-main {
   flex: 1;
   min-height: 0;

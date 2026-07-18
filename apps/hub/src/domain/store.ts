@@ -332,6 +332,11 @@ export class OfficeStore {
     this.db.prepare("UPDATE agents SET status = ? WHERE id = ?").run(status, agentId);
   }
 
+  /** 变更成员类型（手工会话转托管用） */
+  updateAgentKind(agentId: string, kind: AgentKind): void {
+    this.db.prepare("UPDATE agents SET kind = ? WHERE id = ?").run(kind, agentId);
+  }
+
   /** 改名（工号唯一）；冲突时返回 null */
   renameAgent(agentId: string, newName: string): AgentCard | null {
     const existing = this.getAgentByName(newName);

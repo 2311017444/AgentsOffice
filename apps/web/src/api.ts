@@ -90,6 +90,8 @@ export const api = {
     fetch(`/api/agents/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
   stopAgent: (id: string) =>
     fetch(`/api/agents/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+  promoteAgent: (id: string) =>
+    fetch(`/api/agents/${id}/promote`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
   generateAvatar: (id: string, style?: string) =>
     fetch(`/api/agents/${id}/avatar`, {
       method: "POST",
