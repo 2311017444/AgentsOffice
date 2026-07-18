@@ -38,7 +38,7 @@ export class OfficeService {
   ) {
     this.terminals = new TerminalLog(bus);
     this.logs = new LogBook(bus);
-    // 托管终端每一行同时汇入统一日志流
+    // 托管终端每一行同时汇入统一日志流，并落库到该员工的对话历史
     this.terminals.onLine = (agentId, line) => {
       this.logs.append({
         level: line.kind === "error" ? "error" : "info",
@@ -46,6 +46,8 @@ export class OfficeService {
         agentName: this.store.getAgentById(agentId)?.name ?? null,
         text: line.text,
       });
+      this.store.appendHistory(agentId, line.kind, line.text);
+      this.emit("history", { agentId });
     };
     // 确保人类用户与主管席位存在（boss 可能已改过称呼，按 kind 判断）
     if (!store.listAgents().some((a) => a.kind === "user")) {
@@ -367,6 +369,16 @@ export class OfficeService {
     }
     this.event({ type: "stop", agentId, text: "boss 终止了当前执行" });
     return true;
+  }
+
+  /**
+   * 记录一条员工对话历史（提问 prompt / 回复 final 等），持久化并经 SSE 推送。
+   * 手工会话（Cursor/Codex/Claude）经 hooks 同步进来，托管会话走终端流自动落库。
+   */
+  recordHistory(agentId: string, kind: "prompt" | "final" | "info", text: string): void {
+    if (!text.trim()) return;
+    this.store.appendHistory(agentId, kind, text);
+    this.emit("history", { agentId });
   }
 
   /** 记录实时活动（不落 events 表，避免刷屏；经 SSE 推送） */

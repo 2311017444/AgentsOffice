@@ -2115,3 +2115,54 @@ button:focus-visible {
   .kb-wrap { grid-template-columns: 1fr; }
   .kb-sidebar { max-height: 260px; border-right: none; border-bottom: 1px solid var(--line); }
 }
+
+/* ---------- 对话历史弹窗 ---------- */
+
+.history-modal {
+  width: min(860px, 94vw);
+  display: flex;
+  flex-direction: column;
+  max-height: 84vh;
+}
+
+.history-sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.history-screen {
+  flex: 1;
+  min-height: 320px;
+  max-height: calc(84vh - 70px);
+  overflow: auto;
+  margin: 10px 14px 14px;
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: #121a22;
+  color: #d9e2ea;
+  font: 12px/1.7 Consolas, "Cascadia Code", monospace;
+}
+
+.history-screen p { color: #92a1af; font-size: 12px; }
+
+.hist-kind {
+  flex: none;
+  min-width: 18px;
+  text-align: center;
+  border-radius: 4px;
+  font-size: 10px;
+  font-style: normal;
+  background: #223041;
+  color: #92a1af;
+}
+
+.hist-prompt .hist-kind { background: rgba(138, 213, 255, 0.16); color: #8ad5ff; }
+.hist-final .hist-kind { background: rgba(149, 231, 181, 0.16); color: #95e7b5; }
+.hist-error .hist-kind { background: rgba(255, 155, 145, 0.16); color: #ff9b91; }
+
+.term-prompt code { color: #8ad5ff; }
+.hist-prompt code { color: #bfe7ff; }
+.hist-final code { color: #cdeeda; }

@@ -190,6 +190,20 @@ export async function createServer(
     return { ok: true, source, agent: office.store.getAgentById(id) };
   });
 
+  app.get("/api/agents/:id/history", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const agent = office.store.getAgentById(id);
+    if (!agent) return reply.code(404).send({ error: "成员不存在" });
+    const query = request.query as { limit?: string; since?: string };
+    return {
+      agent: { id: agent.id, name: agent.name, kind: agent.kind, status: agent.status },
+      lines: office.store.listHistory(id, {
+        limit: query.limit ? Number(query.limit) : 500,
+        since: query.since ? Number(query.since) : undefined,
+      }),
+    };
+  });
+
   app.get("/api/terminals", async () => {
     const agents = office.store
       .listAgents()

@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS token_usage(
   tokens INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(agent_id, day)
 );
+CREATE TABLE IF NOT EXISTS history(
+  agent_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_history_agent ON history(agent_id, at);
 CREATE TABLE IF NOT EXISTS kb_docs(
   id TEXT PRIMARY KEY,
   category TEXT NOT NULL,
@@ -259,15 +266,59 @@ export class OfficeStore {
     return row?.tokens ?? 0;
   }
 
-  /** 删除员工：清收件箱/会话/用量；历史消息与简报保留（靠名字快照） */
+  /** 删除员工：清收件箱/会话/用量/对话历史；历史消息与简报保留（靠名字快照） */
   deleteAgent(agentId: string): boolean {
     const agent = this.getAgentById(agentId);
     if (!agent) return false;
     this.db.prepare("DELETE FROM deliveries WHERE to_agent_id = ?").run(agentId);
     this.db.prepare("DELETE FROM sessions WHERE agent_id = ?").run(agentId);
     this.db.prepare("DELETE FROM token_usage WHERE agent_id = ?").run(agentId);
+    this.db.prepare("DELETE FROM history WHERE agent_id = ?").run(agentId);
     this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
     return true;
+  }
+
+  // ---------- 对话历史（终端样式的持久流水） ----------
+
+  /** 追加一条对话历史；每个员工最多保留 2000 条，超出滚动清理 */
+  appendHistory(agentId: string, kind: string, text: string): void {
+    const clipped = text.length > 4000 ? `${text.slice(0, 4000)}…` : text;
+    this.db
+      .prepare("INSERT INTO history(agent_id, at, kind, text) VALUES (?, ?, ?, ?)")
+      .run(agentId, now(), kind, clipped);
+    this.db
+      .prepare(
+        `DELETE FROM history WHERE agent_id = ? AND rowid NOT IN (
+           SELECT rowid FROM history WHERE agent_id = ? ORDER BY at DESC, rowid DESC LIMIT 2000
+         )`,
+      )
+      .run(agentId, agentId);
+  }
+
+  listHistory(
+    agentId: string,
+    opts: { limit?: number; since?: number } = {},
+  ): Array<{ at: number; kind: string; text: string }> {
+    const limit = Math.min(opts.limit ?? 500, 2000);
+    if (opts.since) {
+      return this.db
+        .prepare(
+          `SELECT at, kind, text FROM history WHERE agent_id = ? AND at > ?
+           ORDER BY at ASC, rowid ASC LIMIT ?`,
+        )
+        .all(agentId, opts.since, limit) as unknown as Array<{
+        at: number;
+        kind: string;
+        text: string;
+      }>;
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT at, kind, text FROM history WHERE agent_id = ?
+         ORDER BY at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(agentId, limit) as unknown as Array<{ at: number; kind: string; text: string }>;
+    return rows.reverse();
   }
 
   setAgentStatus(agentId: string, status: AgentStatus): void {

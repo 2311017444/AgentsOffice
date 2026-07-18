@@ -98,6 +98,17 @@ export const api = {
     }).then((r) => json<{ ok: boolean; source: "codex" | "identicon" }>(r)),
   terminals: () =>
     fetch("/api/terminals").then((r) => json<{ agents: TerminalPane[] }>(r)),
+  history: (id: string, opts: { limit?: number; since?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.since) params.set("since", String(opts.since));
+    return fetch(`/api/agents/${id}/history?${params}`).then((r) =>
+      json<{
+        agent: { id: string; name: string; kind: string; status: string };
+        lines: Array<{ at: number; kind: string; text: string }>;
+      }>(r),
+    );
+  },
   dispatch: (input: { title: string; description?: string; agents?: string[] }) =>
     fetch("/api/dispatch", {
       method: "POST",

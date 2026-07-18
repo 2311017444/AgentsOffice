@@ -57,6 +57,8 @@ export function handleCursorHook(
       const excerpt = truncate(prompt.replaceAll(/\s+/g, " "), 120);
       office.setActivity(agent.id, `处理指令：${excerpt}`);
       office.event({ type: "prompt", agentId: agent.id, text: `收到新指令：${excerpt}` });
+      // 会话内部的提问全文同步进办公室（对话历史 + 日志流）
+      office.recordHistory(agent.id, "prompt", prompt);
       return {};
     }
     case "beforeShellExecution": {
@@ -77,6 +79,7 @@ export function handleCursorHook(
     case "afterAgentResponse": {
       const textContent = typeof payload.text === "string" ? payload.text : "";
       if (textContent.trim()) {
+        office.recordHistory(agent.id, "final", textContent);
         office.publishBrief({
           agentName: agent.name,
           kind: "auto",
@@ -164,6 +167,7 @@ export function handleClaudeHook(
       const excerpt = truncate(prompt.replaceAll(/\s+/g, " "), 120);
       office.setActivity(agent.id, `处理指令：${excerpt}`);
       office.event({ type: "prompt", agentId: agent.id, text: `收到新指令：${excerpt}` });
+      office.recordHistory(agent.id, "prompt", prompt);
       return {};
     }
     case "PreToolUse": {
@@ -177,6 +181,7 @@ export function handleClaudeHook(
       const transcriptPath = payload.transcript_path as string | undefined;
       const lastText = transcriptPath ? readTranscript(transcriptPath) : null;
       if (lastText?.trim()) {
+        office.recordHistory(agent.id, "final", lastText);
         office.publishBrief({
           agentName: agent.name,
           kind: "auto",
@@ -257,6 +262,7 @@ export function handleCodexNotify(
   office.store.setAgentStatus(agent.id, "online");
 
   if (lastMessage.trim()) {
+    office.recordHistory(agent.id, "final", lastMessage);
     office.publishBrief({
       agentName: agent.name,
       kind: "auto",

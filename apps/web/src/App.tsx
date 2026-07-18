@@ -133,6 +133,96 @@ function BossNameControl({ boss, onChanged }: { boss: AgentCard | undefined; onC
   );
 }
 
+// ---------- 对话历史 ----------
+
+const HISTORY_KIND_LABELS: Record<string, string> = {
+  prompt: "问",
+  final: "答",
+  cmd: "▸",
+  out: "·",
+  info: "ⓘ",
+  error: "!",
+};
+
+function HistoryModal({ agent, onClose }: { agent: AgentCard; onClose: () => void }) {
+  const [lines, setLines] = useState<Array<{ at: number; kind: string; text: string }>>([]);
+  const [loaded, setLoaded] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickBottomRef = useRef(true);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api
+        .history(agent.id, { limit: 1000 })
+        .then(({ lines: fresh }) => {
+          if (!alive) return;
+          setLines(fresh);
+          setLoaded(true);
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 2000);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [agent.id, onClose]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [lines.length]);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div
+        className="modal history-modal"
+        role="dialog"
+        aria-label={`${agent.name} 的对话历史`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="modal-head">
+          <h3>
+            {agent.name} · 对话历史
+            <small className="history-sub">
+              {AGENT_KIND_LABELS[agent.kind] ?? agent.kind} · {lines.length} 条 · 实时更新
+            </small>
+          </h3>
+          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <div className="history-screen" role="log" aria-live="polite" ref={scrollRef} onScroll={onScroll}>
+          {loaded && lines.length === 0 && (
+            <p>
+              还没有对话记录。托管员工被 @ 后、或手工会话（Cursor/Codex/Claude）重启加载新 hooks 后，
+              提问与回复会自动同步到这里。
+            </p>
+          )}
+          {lines.map((line, index) => (
+            <div key={`${line.at}-${index}`} className={`term-line term-${line.kind} hist-${line.kind}`}>
+              <time>{clockTime(line.at)}</time>
+              <em className="hist-kind">{HISTORY_KIND_LABELS[line.kind] ?? "·"}</em>
+              <code>{line.text}</code>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- 工位卡片 ----------
 
 function AgentBadge({
@@ -150,6 +240,7 @@ function AgentBadge({
   const [title, setTitle] = useState(meta(agent).title ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const save = async () => {
     try {
@@ -301,6 +392,11 @@ function AgentBadge({
             ✎
           </button>
           {agent.kind !== "user" && agent.kind !== "supervisor" && (
+            <button className="icon-btn" title="对话历史（终端视图）" onClick={() => setHistoryOpen(true)}>
+              ≣
+            </button>
+          )}
+          {agent.kind !== "user" && agent.kind !== "supervisor" && (
             <button className="icon-btn" title="生成员工头像" disabled={busy} onClick={() => void makeAvatar()}>
               ◉
             </button>
@@ -317,6 +413,8 @@ function AgentBadge({
           )}
         </span>
       </div>
+
+      {historyOpen && <HistoryModal agent={agent} onClose={() => setHistoryOpen(false)} />}
     </div>
   );
 }

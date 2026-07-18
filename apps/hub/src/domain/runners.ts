@@ -61,15 +61,16 @@ export function buildCodexExecArgs(meta: { threadId?: string; sandbox?: string }
   return args;
 }
 
-/** 把 codex --json 事件翻译成终端可读行 */
+/** 把 codex --json 事件翻译成终端可读行（item 类型字段兼容 item_type / type 两种拼法） */
 function codexEventToTerm(event: any, io: TurnIO): void {
   const item = event?.item;
-  if (event?.type === "item.started" && item?.item_type === "command_execution") {
+  const itemType = item?.item_type ?? item?.type;
+  if (event?.type === "item.started" && itemType === "command_execution") {
     io.term(`$ ${item.command ?? "(命令)"}`, "cmd");
     return;
   }
   if (event?.type === "item.completed" && item) {
-    switch (item.item_type) {
+    switch (itemType) {
       case "command_execution": {
         const output = typeof item.aggregated_output === "string" ? item.aggregated_output : "";
         const tail = output.split(/\r?\n/).filter(Boolean).slice(-8).join("\n");
