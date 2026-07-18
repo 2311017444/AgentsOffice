@@ -1,0 +1,16 @@
+{
+  "name": "agent-office",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "start": "node apps/hub/dist/index.js",
+    "office:install": "node apps/hub/dist/setup/install.js install",
+    "office:uninstall": "node apps/hub/dist/setup/install.js uninstall"
+  }
+}
