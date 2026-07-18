@@ -1102,6 +1102,8 @@ function TerminalBoard({ refreshKey }: { refreshKey: number }) {
   const [agents, setAgents] = useState<TerminalPane[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [error, setError] = useState("");
+  const [cmd, setCmd] = useState("");
+  const [sending, setSending] = useState(false);
 
   const load = useCallback(() => {
     api.terminals().then(({ agents: panes }) => {
@@ -1122,10 +1124,10 @@ function TerminalBoard({ refreshKey }: { refreshKey: number }) {
     <div className="terminal-wrap">
       <aside className="terminal-list">
         <div className="terminal-list-head">
-          <strong>托管终端</strong>
+          <strong>终端工位</strong>
           <button className="icon-btn" title="刷新终端" onClick={load}>↻</button>
         </div>
-        {agents.length === 0 && <p className="empty">暂无托管工位。创建托管 Agent 后，终端输出会实时出现在这里。</p>}
+        {agents.length === 0 && <p className="empty">暂无可用终端。托管工位与带续聊凭证的 codex/claude 会话都会出现在这里。</p>}
         {agents.map((pane) => (
           <button key={pane.id} className={`terminal-agent ${pane.id === selected ? "active" : ""}`} onClick={() => setSelected(pane.id)}>
             <span><b>{pane.name}</b><small>{AGENT_KIND_LABELS[pane.kind as keyof typeof AGENT_KIND_LABELS] ?? pane.kind}</small></span>
@@ -1147,6 +1149,39 @@ function TerminalBoard({ refreshKey }: { refreshKey: number }) {
           {current && current.lines.length === 0 && <p>等待终端输出…</p>}
           {current?.lines.map((line, index) => <div key={`${line.at}-${index}`} className={`term-line term-${line.kind}`}><time>{clockTime(line.at)}</time><code>{line.text}</code></div>)}
         </div>
+        {current && (
+          <form
+            className="terminal-input"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const text = cmd.trim();
+              if (!text || sending) return;
+              setSending(true);
+              api
+                .terminalInput(current.id, text)
+                .then(() => {
+                  setCmd("");
+                  setError("");
+                  load();
+                })
+                .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+                .finally(() => setSending(false));
+            }}
+          >
+            <span className="terminal-prompt">❯</span>
+            <input
+              value={cmd}
+              onChange={(event) => setCmd(event.target.value)}
+              placeholder={`直接输入发给 ${current.name} 的底层会话（原样透传，Enter 发送）`}
+              spellCheck={false}
+              autoComplete="off"
+              disabled={sending}
+            />
+            <button type="submit" disabled={sending || !cmd.trim()}>
+              {sending ? "发送中…" : "发送"}
+            </button>
+          </form>
+        )}
       </section>
     </div>
   );

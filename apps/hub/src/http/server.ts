@@ -172,6 +172,18 @@ export async function createServer(
     return { ok: true, agent: result.agent };
   });
 
+  // 终端直连输入：原样透传到底层会话（不套办公室提示词）
+  app.post("/api/agents/:id/input", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { text?: string };
+    if (typeof body.text !== "string" || !body.text.trim()) {
+      return reply.code(400).send({ error: "text 不能为空" });
+    }
+    const result = office.directInput(id, body.text);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    return { ok: true };
+  });
+
   app.post("/api/agents/:id/stop", async (request, reply) => {
     const { id } = request.params as { id: string };
     const agent = office.store.getAgentById(id);
@@ -212,9 +224,14 @@ export async function createServer(
   });
 
   app.get("/api/terminals", async () => {
-    const agents = office.store
-      .listAgents()
-      .filter((a) => a.kind.endsWith("-managed"));
+    // 托管工位 + 带续聊凭证的手工会话（后者可通过直连输入激活）
+    const agents = office.store.listAgents().filter((a) => {
+      if (a.kind.endsWith("-managed")) return true;
+      const meta = a.meta as { threadId?: string; sessionId?: string };
+      if (a.kind === "codex-cli" && meta.threadId) return true;
+      if (a.kind === "claude-cli" && meta.sessionId) return true;
+      return false;
+    });
     return {
       agents: agents.map((a) => ({
         id: a.id,

@@ -309,41 +309,53 @@ export function createManagedDispatcher(
 ) {
   const queue = new RunQueue();
   const lastErrors = new Map<string, string>();
+  // 直连输入也会打到 codex-cli / claude-cli（凭 threadId/sessionId 续聊），按前缀路由
   const resolveRunner = (kind: string): TurnRunner => {
-    if (kind === "codex-managed") {
+    if (kind.startsWith("codex")) {
       return runners?.["codex-managed"] ?? ((a, p, io) => runCodexTurn(a, p, config, io));
     }
-    if (kind === "claude-managed") {
+    if (kind.startsWith("claude")) {
       return runners?.["claude-managed"] ?? ((a, p, io) => runClaudeTurn(a, p, config, io));
     }
     return runners?.["cursor-managed"] ?? ((a, p, io) => runCursorTurn(a, p, config, io));
   };
 
-  return (agent: AgentCard, message: { fromName: string; text: string; taskId?: string | null }) => {
+  return (
+    agent: AgentCard,
+    message: { fromName: string; text: string; taskId?: string | null; raw?: boolean },
+  ) => {
     void queue.enqueue(agent.id, async () => {
       const { store } = office;
       store.setAgentStatus(agent.id, "busy");
       office.setActivity(
         agent.id,
-        `执行 ${message.fromName} 的请求：${truncate(message.text.replaceAll(/\s+/g, " "), 80)}`,
+        `执行 ${message.fromName} 的${message.raw ? "终端直连输入" : "请求"}：${truncate(message.text.replaceAll(/\s+/g, " "), 80)}`,
       );
-      office.event({ type: "run", agentId: agent.id, text: "收到 @消息，开始执行" });
+      office.event({
+        type: "run",
+        agentId: agent.id,
+        text: message.raw ? "收到终端直连输入，开始执行" : "收到 @消息，开始执行",
+      });
       office.terminals.push(
         agent.id,
-        `→ ${message.fromName}：${truncate(message.text.replaceAll(/\s+/g, " "), 200)}`,
+        message.raw
+          ? `❯ ${truncate(message.text.replaceAll(/\s+/g, " "), 500)}`
+          : `→ ${message.fromName}：${truncate(message.text.replaceAll(/\s+/g, " "), 200)}`,
         "cmd",
       );
-      const context = store.listBriefs(5).map((b) => ({
-        agentName: b.agentName,
-        title: b.title,
-        result: b.result,
-      }));
-      const prompt = buildManagedPrompt({
-        agentName: agent.name,
-        senderName: message.fromName,
-        text: message.text,
-        contextBriefs: context,
-      });
+      // 直连输入原样透传（精细化调整）；@消息才包装办公室提示词模板
+      const prompt = message.raw
+        ? message.text
+        : buildManagedPrompt({
+            agentName: agent.name,
+            senderName: message.fromName,
+            text: message.text,
+            contextBriefs: store.listBriefs(5).map((b) => ({
+              agentName: b.agentName,
+              title: b.title,
+              result: b.result,
+            })),
+          });
       const io: TurnIO = {
         term: (text, kind) => office.terminals.push(agent.id, text, kind),
         registerKill: (kill) => office.registerRunKill(agent.id, kill),
@@ -356,6 +368,20 @@ export function createManagedDispatcher(
           store.updateAgentMeta(agent.id, result.meta);
         }
         if (result.usage) store.addTokens(agent.id, result.usage);
+        if (message.raw) {
+          // 直连输入：结果回传到群里给老板看，但不发简报（属于精细调整，不算正式产出）
+          office.postReply(agent.id, `【直连回复】${result.text}`, null);
+          store.setAgentStatus(agent.id, "online");
+          office.setActivity(agent.id, null);
+          lastErrors.delete(agent.id);
+          office.terminals.push(
+            agent.id,
+            `✓ 直连执行完成${result.usage ? `（${result.usage.toLocaleString()} tokens）` : ""}`,
+            "info",
+          );
+          office.event({ type: "run", agentId: agent.id, text: "终端直连输入执行完成，结果已回传" });
+          return;
+        }
         store.markDeliveriesRead(agent.id);
         // 回复以群消息形式进入动态流（不再触发 @ 路由），同时留档简报墙
         office.postReply(agent.id, result.text, message.taskId ?? null);
@@ -380,8 +406,8 @@ export function createManagedDispatcher(
         );
         office.event({ type: "run", agentId: agent.id, text: "执行完成，已回复并发布简报" });
       } catch (error) {
-        // 失败也要清收件箱，否则未读数只增不减
-        store.markDeliveriesRead(agent.id);
+        // 失败也要清收件箱，否则未读数只增不减（直连输入没有投递记录，跳过）
+        if (!message.raw) store.markDeliveriesRead(agent.id);
         store.setAgentStatus(agent.id, "online");
         office.setActivity(agent.id, null);
         const raw = error instanceof Error ? error.message : String(error);

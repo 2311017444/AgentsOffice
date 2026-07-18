@@ -1769,6 +1769,50 @@ button:focus-visible {
 .term-final code { color: #95e7b5; }
 .term-info code { color: #eac77f; }
 
+/* 终端直连输入行 */
+.terminal-input {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid #2a3642;
+  background: #17212b;
+}
+
+.terminal-prompt {
+  flex: none;
+  color: #7ee2a1;
+  font: 700 13px/1 Consolas, "Cascadia Code", monospace;
+}
+
+.terminal-input input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #e6eef5;
+  font: 12px/1.5 Consolas, "Cascadia Code", monospace;
+  caret-color: #7ee2a1;
+}
+
+.terminal-input input::placeholder { color: #5d6f80; }
+
+.terminal-input button {
+  flex: none;
+  border: 1px solid #34495c;
+  border-radius: 6px;
+  padding: 4px 12px;
+  background: #1f2c39;
+  color: #a9c3da;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.terminal-input button:disabled { opacity: 0.45; cursor: default; }
+.terminal-input button:not(:disabled):hover { background: #27394b; color: #d5e6f5; }
+
 @media (max-width: 760px) {
   .terminal-main { padding: 10px; }
   .terminal-wrap { grid-template-columns: 1fr; min-height: 0; }

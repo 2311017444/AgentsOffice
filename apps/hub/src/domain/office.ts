@@ -14,7 +14,7 @@ import { truncate } from "../util.js";
 
 export type ManagedDispatcher = (
   agent: AgentCard,
-  message: { fromName: string; text: string; taskId?: string | null },
+  message: { fromName: string; text: string; taskId?: string | null; raw?: boolean },
 ) => void;
 
 export const USER_AGENT_NAME = "老板";
@@ -387,6 +387,32 @@ export class OfficeService {
     }
     this.emit("agent", { agentId });
     return { ok: true, agent: fresh };
+  }
+
+  /**
+   * 终端直连输入：把老板敲的内容**原样**发进该成员的底层会话（不套办公室提示词模板），
+   * 用于精细化调整某个终端；对有续聊凭证的手工会话（codex-cli/claude-cli）输入即激活续聊。
+   * 结果只回显在终端/历史里，不进群、不发简报。
+   */
+  directInput(agentId: string, text: string): { ok: boolean; error?: string } {
+    const trimmed = text.trim();
+    if (!trimmed) return { ok: false, error: "输入内容为空" };
+    const agent = this.store.getAgentById(agentId);
+    if (!agent) return { ok: false, error: "成员不存在" };
+    const meta = agent.meta as { threadId?: string; sessionId?: string };
+    const eligible =
+      MANAGED_KINDS.has(agent.kind) ||
+      (agent.kind === "codex-cli" && !!meta.threadId) ||
+      (agent.kind === "claude-cli" && !!meta.sessionId);
+    if (!eligible) {
+      return {
+        ok: false,
+        error: "该成员不支持终端直连输入（需要托管工位或带续聊凭证的 codex/claude 会话）",
+      };
+    }
+    if (!this.managedDispatcher) return { ok: false, error: "托管调度器未就绪" };
+    this.managedDispatcher(agent, { fromName: this.bossName(), text: trimmed, raw: true });
+    return { ok: true };
   }
 
   // ---------- 托管运行控制 ----------

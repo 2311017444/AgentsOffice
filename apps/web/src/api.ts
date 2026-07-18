@@ -92,6 +92,12 @@ export const api = {
     fetch(`/api/agents/${id}/stop`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
   promoteAgent: (id: string) =>
     fetch(`/api/agents/${id}/promote`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+  terminalInput: (id: string, text: string) =>
+    fetch(`/api/agents/${id}/input`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then((r) => json<{ ok: boolean }>(r)),
   generateAvatar: (id: string, style?: string) =>
     fetch(`/api/agents/${id}/avatar`, {
       method: "POST",
