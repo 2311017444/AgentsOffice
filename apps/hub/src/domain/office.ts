@@ -128,7 +128,7 @@ export class OfficeService {
         if (agent.id === sender.id || agent.kind === "user" || agent.kind === "supervisor") {
           continue;
         }
-        if (channel !== HALL_CHANNEL && agent.groupId !== channel) continue;
+        if (channel !== HALL_CHANNEL && !agent.groupIds?.includes(channel)) continue;
         targetAgents.set(agent.id, agent);
       }
     }
@@ -319,22 +319,27 @@ export class OfficeService {
     return { ok: true };
   }
 
-  assignGroup(agentId: string, groupId: string | null): { ok: boolean; error?: string } {
+  /** 整体覆盖员工的组归属；支持同时在多个组，传空数组表示退出所有组 */
+  assignGroups(agentId: string, groupIds: string[]): { ok: boolean; error?: string } {
     const agent = this.store.getAgentById(agentId);
     if (!agent) return { ok: false, error: "成员不存在" };
     if (agent.kind === "user" || agent.kind === "supervisor") {
       return { ok: false, error: "boss 与主管不归属任何项目组（全频道可见）" };
     }
-    if (!this.store.setAgentGroup(agentId, groupId)) {
-      return { ok: false, error: "项目组不存在" };
+    if (!this.store.setAgentGroups(agentId, groupIds)) {
+      return { ok: false, error: "存在无效的项目组" };
     }
-    const groupName = groupId ? this.store.getGroupById(groupId)?.name : null;
+    const names = this.store
+      .agentGroupIds(agentId)
+      .map((gid) => this.store.getGroupById(gid)?.name)
+      .filter(Boolean);
     this.event({
       type: "group",
       agentId,
-      text: groupName
-        ? `「${agent.name}」加入项目组「${groupName}」`
-        : `「${agent.name}」退出项目组，回到大群`,
+      text:
+        names.length > 0
+          ? `「${agent.name}」的项目组调整为：${names.join("、")}`
+          : `「${agent.name}」退出所有项目组，回到大群`,
     });
     this.emit("agent", { agentId });
     return { ok: true };
@@ -701,7 +706,7 @@ export class OfficeService {
         workspace: a.workspace,
         model: (a.meta as { model?: string }).model ?? null,
         title: (a.meta as { title?: string }).title ?? null,
-        group: a.groupName ?? null,
+        groups: a.groupNames ?? [],
       })),
       openTasks: this.store.listTasks().filter((t) => t.status !== "done" && t.status !== "cancelled"),
       briefs: this.store.listBriefs(limitBriefs),

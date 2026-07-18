@@ -241,7 +241,7 @@ function AgentBadge({
   const [name, setName] = useState(agent.name);
   const [model, setModel] = useState(meta(agent).model ?? "");
   const [title, setTitle] = useState(meta(agent).title ?? "");
-  const [groupId, setGroupId] = useState(agent.groupId ?? "");
+  const [groupIds, setGroupIds] = useState<string[]>(agent.groupIds ?? []);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -252,9 +252,7 @@ function AgentBadge({
         name: name.trim(),
         model,
         title,
-        ...(agent.kind !== "user" && agent.kind !== "supervisor"
-          ? { groupId: groupId || null }
-          : {}),
+        ...(agent.kind !== "user" && agent.kind !== "supervisor" ? { groupIds } : {}),
       });
       setEditing(false);
       setError("");
@@ -356,9 +354,13 @@ function AgentBadge({
       )}
 
       {!editing && m.title && <div className="badge-title">职位：{m.title}</div>}
-      {!editing && agent.groupName && (
-        <div className="badge-group" title={`项目组：${agent.groupName}`}>
-          ⌂ {agent.groupName}
+      {!editing && (agent.groupNames?.length ?? 0) > 0 && (
+        <div className="badge-groups">
+          {agent.groupNames!.map((gn) => (
+            <span key={gn} className="badge-group" title={`项目组：${gn}`}>
+              # {gn}
+            </span>
+          ))}
         </div>
       )}
 
@@ -379,14 +381,23 @@ function AgentBadge({
             />
           )}
           {agent.kind !== "user" && agent.kind !== "supervisor" && groups.length > 0 && (
-            <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-              <option value="">不分组（只在大群）</option>
+            <div className="group-picker">
+              <span className="group-picker-label">项目组（可多选）</span>
               {groups.map((g) => (
-                <option key={g.id} value={g.id}>
+                <label key={g.id} className="group-check">
+                  <input
+                    type="checkbox"
+                    checked={groupIds.includes(g.id)}
+                    onChange={(e) =>
+                      setGroupIds((prev) =>
+                        e.target.checked ? [...prev, g.id] : prev.filter((x) => x !== g.id),
+                      )
+                    }
+                  />
                   {g.name}
-                </option>
+                </label>
               ))}
-            </select>
+            </div>
           )}
           {error && <div className="form-error">{error}</div>}
           <div className="form-actions">
@@ -434,7 +445,7 @@ function AgentBadge({
               setName(agent.name);
               setModel(m.model ?? "");
               setTitle(m.title ?? "");
-              setGroupId(agent.groupId ?? "");
+              setGroupIds(agent.groupIds ?? []);
             }}
           >
             ✎
@@ -1341,7 +1352,9 @@ function Feed({ state, channel }: { state: OfficeState; channel: string }) {
     const groupMemberIds =
       channel === "hall"
         ? null
-        : new Set(state.agents.filter((a) => a.groupId === channel).map((a) => a.id));
+        : new Set(
+            state.agents.filter((a) => a.groupIds?.includes(channel)).map((a) => a.id),
+          );
     const messages = state.messages.filter((m) => (m.channel ?? "hall") === channel);
     for (const m of messages) {
       const own = m.fromName === bossName;

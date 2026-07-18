@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS groups(
   name TEXT NOT NULL COLLATE NOCASE UNIQUE,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS group_members(
+  group_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  PRIMARY KEY(group_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_members_agent ON group_members(agent_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_to ON deliveries(to_agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_briefs_created ON briefs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at DESC);
@@ -125,7 +131,6 @@ interface AgentRow {
   meta: string;
   last_seen_at: number | null;
   created_at: number;
-  group_id?: string | null;
 }
 
 /** 本地时区的 YYYY-MM-DD，作为 token 日结键 */
@@ -143,7 +148,6 @@ function rowToAgent(row: AgentRow): AgentCard {
     meta: JSON.parse(row.meta ?? "{}"),
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
-    groupId: row.group_id ?? null,
   };
 }
 
@@ -161,16 +165,21 @@ export class OfficeStore {
     } catch {
       /* 列已存在 */
     }
-    // 旧库迁移：项目组（员工归属 + 消息频道）
-    try {
-      this.db.exec("ALTER TABLE agents ADD COLUMN group_id TEXT");
-    } catch {
-      /* 列已存在 */
-    }
+    // 旧库迁移：消息频道
     try {
       this.db.exec("ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'hall'");
     } catch {
       /* 列已存在 */
+    }
+    // 旧库迁移：单组时代的 agents.group_id 搬进多对多关系表后废弃
+    try {
+      this.db.exec(
+        `INSERT OR IGNORE INTO group_members(group_id, agent_id)
+         SELECT group_id, id FROM agents WHERE group_id IS NOT NULL`,
+      );
+      this.db.exec("UPDATE agents SET group_id = NULL WHERE group_id IS NOT NULL");
+    } catch {
+      /* 旧列不存在（新库），无需迁移 */
     }
   }
 
@@ -259,12 +268,26 @@ export class OfficeStore {
       )
       .all() as unknown as Array<{ agentId: string; cnt: number }>;
     const doneMap = new Map(done.map((d) => [d.agentId, d.cnt]));
-    const groupNames = new Map(this.listGroups().map((g) => [g.id, g.name]));
+    const memberships = this.db
+      .prepare(
+        `SELECT gm.agent_id AS agentId, gm.group_id AS groupId, g.name AS groupName
+         FROM group_members gm JOIN groups g ON g.id = gm.group_id
+         ORDER BY g.created_at ASC`,
+      )
+      .all() as unknown as Array<{ agentId: string; groupId: string; groupName: string }>;
+    const groupMap = new Map<string, Array<{ id: string; name: string }>>();
+    for (const m of memberships) {
+      const list = groupMap.get(m.agentId) ?? [];
+      list.push({ id: m.groupId, name: m.groupName });
+      groupMap.set(m.agentId, list);
+    }
     for (const agent of agents) {
       agent.pendingCount = map.get(agent.id) ?? 0;
       agent.todayTokens = tokenMap.get(agent.id) ?? 0;
       agent.doneTasks = doneMap.get(agent.id) ?? 0;
-      agent.groupName = agent.groupId ? (groupNames.get(agent.groupId) ?? null) : null;
+      const groups = groupMap.get(agent.id) ?? [];
+      agent.groupIds = groups.map((g) => g.id);
+      agent.groupNames = groups.map((g) => g.name);
     }
     return agents;
   }
@@ -299,8 +322,8 @@ export class OfficeStore {
   listGroups(): OfficeGroup[] {
     const rows = this.db
       .prepare(
-        `SELECT g.id, g.name, g.created_at, COUNT(a.id) AS member_count
-         FROM groups g LEFT JOIN agents a ON a.group_id = g.id
+        `SELECT g.id, g.name, g.created_at, COUNT(gm.agent_id) AS member_count
+         FROM groups g LEFT JOIN group_members gm ON gm.group_id = g.id
          GROUP BY g.id ORDER BY g.created_at ASC`,
       )
       .all() as unknown as Array<{
@@ -317,22 +340,35 @@ export class OfficeStore {
     }));
   }
 
-  /** 解散项目组：成员回到未分组（大群仍可 @ 到他们），组频道历史消息保留 */
+  /** 解散项目组：成员退出该组（其他组归属与大群不受影响），组频道历史消息保留 */
   deleteGroup(id: string): boolean {
     if (!this.getGroupById(id)) return false;
-    this.db.prepare("UPDATE agents SET group_id = NULL WHERE group_id = ?").run(id);
+    this.db.prepare("DELETE FROM group_members WHERE group_id = ?").run(id);
     this.db.prepare("DELETE FROM groups WHERE id = ?").run(id);
     return true;
   }
 
-  setAgentGroup(agentId: string, groupId: string | null): boolean {
-    if (groupId && !this.getGroupById(groupId)) return false;
-    this.db.prepare("UPDATE agents SET group_id = ? WHERE id = ?").run(groupId, agentId);
+  /** 整体覆盖一名员工的组归属（可同时在多个组）；有任一组不存在则整体失败 */
+  setAgentGroups(agentId: string, groupIds: string[]): boolean {
+    const unique = [...new Set(groupIds)];
+    if (unique.some((gid) => !this.getGroupById(gid))) return false;
+    this.db.prepare("DELETE FROM group_members WHERE agent_id = ?").run(agentId);
+    const stmt = this.db.prepare(
+      "INSERT OR IGNORE INTO group_members(group_id, agent_id) VALUES (?, ?)",
+    );
+    for (const gid of unique) stmt.run(gid, agentId);
     return true;
   }
 
+  agentGroupIds(agentId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT group_id AS groupId FROM group_members WHERE agent_id = ?")
+      .all(agentId) as unknown as Array<{ groupId: string }>;
+    return rows.map((r) => r.groupId);
+  }
+
   groupMembers(groupId: string): AgentCard[] {
-    return this.listAgents().filter((a) => a.groupId === groupId);
+    return this.listAgents().filter((a) => a.groupIds?.includes(groupId));
   }
 
   /** 累计今日 token 用量（托管执行结束时调用） */
@@ -361,6 +397,7 @@ export class OfficeStore {
     this.db.prepare("DELETE FROM sessions WHERE agent_id = ?").run(agentId);
     this.db.prepare("DELETE FROM token_usage WHERE agent_id = ?").run(agentId);
     this.db.prepare("DELETE FROM history WHERE agent_id = ?").run(agentId);
+    this.db.prepare("DELETE FROM group_members WHERE agent_id = ?").run(agentId);
     this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
     return true;
   }

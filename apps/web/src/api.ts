@@ -92,7 +92,7 @@ export const api = {
     }).then((r) => json<AgentCard>(r)),
   updateAgent: (
     id: string,
-    patch: { name?: string; model?: string; title?: string; groupId?: string | null },
+    patch: { name?: string; model?: string; title?: string; groupIds?: string[] },
   ) =>
     fetch(`/api/agents/${id}`, {
       method: "PATCH",

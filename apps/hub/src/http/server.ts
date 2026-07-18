@@ -176,12 +176,16 @@ export async function createServer(
       name?: string;
       model?: string;
       title?: string;
-      groupId?: string | null;
+      /** 组归属整体覆盖；空数组 = 退出所有组 */
+      groupIds?: string[];
     };
     const agent = office.renameAgent(id, body);
     if (!agent) return reply.code(409).send({ error: "改名失败：Agent 不存在或工号已被占用" });
-    if (body.groupId !== undefined) {
-      const result = office.assignGroup(id, body.groupId);
+    if (body.groupIds !== undefined) {
+      if (!Array.isArray(body.groupIds) || body.groupIds.some((g) => typeof g !== "string")) {
+        return reply.code(400).send({ error: "groupIds 必须是字符串数组" });
+      }
+      const result = office.assignGroups(id, body.groupIds);
       if (!result.ok) return reply.code(400).send({ error: result.error });
     }
     return office.store.listAgents().find((a) => a.id === id) ?? agent;

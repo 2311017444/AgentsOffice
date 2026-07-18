@@ -29,9 +29,9 @@ export interface AgentCard {
   todayTokens?: number;
   /** 已完成任务数 */
   doneTasks?: number;
-  /** 所属项目组（null 表示只在大群） */
-  groupId?: string | null;
-  groupName?: string | null;
+  /** 所属项目组（可同时在多个组；空数组表示只在大群） */
+  groupIds?: string[];
+  groupNames?: string[];
 }
 
 /** 频道标识：大群固定为 "hall"，项目组频道即组 ID */
