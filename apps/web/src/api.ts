@@ -205,6 +205,15 @@ export const api = {
     fetch(`/api/kb/docs/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
   shellTerms: () =>
     fetch("/api/shellterms").then((r) => json<{ terminals: ShellTermInfo[] }>(r)),
+  fsDirs: (path?: string) =>
+    fetch(`/api/fs/dirs${path ? `?path=${encodeURIComponent(path)}` : ""}`).then((r) =>
+      json<{
+        path: string | null;
+        parent: string | null;
+        dirs: Array<{ name: string; path: string }>;
+        home: string;
+      }>(r),
+    ),
   shellTermCreate: (input: { shell?: string; cwd?: string; title?: string }) =>
     fetch("/api/shellterms", {
       method: "POST",

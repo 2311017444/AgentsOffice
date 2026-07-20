@@ -2,8 +2,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { uuid } from "../util.js";
 import type { OfficeConfig } from "../config.js";
@@ -208,6 +209,46 @@ export async function createServer(
       }
     });
     socket.on("close", () => detach());
+  });
+
+  // ---------- 目录浏览（本机文件夹选择器用；仅列目录不列文件） ----------
+  app.get("/api/fs/dirs", async (request, reply) => {
+    const q = (request.query ?? {}) as { path?: string };
+    if (!q.path?.trim()) {
+      // 根级：Windows 列所有盘符，其他平台给根目录
+      const roots: Array<{ name: string; path: string }> = [];
+      if (process.platform === "win32") {
+        for (let i = 65; i <= 90; i++) {
+          const root = `${String.fromCharCode(i)}:\\`;
+          if (existsSync(root)) roots.push({ name: root, path: root });
+        }
+      } else {
+        roots.push({ name: "/", path: "/" });
+      }
+      return { path: null, parent: null, dirs: roots, home: homedir() };
+    }
+    const target = resolve(q.path.trim());
+    if (!existsSync(target)) {
+      return reply.code(400).send({ error: `目录不存在：${target}` });
+    }
+    let dirs: Array<{ name: string; path: string }>;
+    try {
+      dirs = readdirSync(target, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => ({ name: entry.name, path: join(target, entry.name) }))
+        .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    } catch (error) {
+      return reply
+        .code(400)
+        .send({ error: `无法读取目录：${error instanceof Error ? error.message : String(error)}` });
+    }
+    const parent = dirname(target);
+    return {
+      path: target,
+      parent: parent === target ? null : parent,
+      dirs,
+      home: homedir(),
+    };
   });
 
   // ---------- 项目组 ----------

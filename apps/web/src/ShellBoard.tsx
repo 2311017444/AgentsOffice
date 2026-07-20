@@ -12,6 +12,98 @@ const XTERM_THEME = {
   selectionBackground: "#33415e",
 };
 
+/** 文件夹选择弹窗：走 hub 的目录浏览接口，网页版与桌面版通用 */
+export function FolderPicker({
+  initial,
+  onPick,
+  onClose,
+}: {
+  initial?: string;
+  onPick: (path: string) => void;
+  onClose: () => void;
+}) {
+  const [path, setPath] = useState<string | null>(null);
+  const [parent, setParent] = useState<string | null>(null);
+  const [dirs, setDirs] = useState<Array<{ name: string; path: string }>>([]);
+  const [home, setHome] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async (target?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.fsDirs(target);
+      setPath(res.path);
+      setParent(res.parent);
+      setDirs(res.dirs);
+      setHome(res.home);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load(initial?.trim() || undefined);
+  }, [load, initial]);
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal folder-picker" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h3>选择启动目录</h3>
+          <button className="icon-btn" title="关闭" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <div className="picker-path" title={path ?? "选择磁盘"}>
+          {path ?? "选择磁盘"}
+        </div>
+        <div className="picker-quick">
+          <button onClick={() => void load()}>💾 磁盘</button>
+          <button onClick={() => void load(home)} disabled={!home}>
+            🏠 主目录
+          </button>
+          {parent && <button onClick={() => void load(parent)}>↑ 上一级</button>}
+        </div>
+        {error && <div className="shell-error picker-error">{error}</div>}
+        <div className="picker-list">
+          {loading ? (
+            <div className="picker-hint">读取中…</div>
+          ) : dirs.length === 0 ? (
+            <div className="picker-hint">（没有子文件夹）</div>
+          ) : (
+            dirs.map((d) => (
+              <button key={d.path} className="picker-dir" onClick={() => void load(d.path)}>
+                📁 {d.name}
+              </button>
+            ))
+          )}
+        </div>
+        <div className="picker-foot">
+          <button className="ghost-btn" onClick={onClose}>
+            取消
+          </button>
+          <button
+            className="primary-btn"
+            disabled={!path}
+            onClick={() => {
+              if (path) {
+                onPick(path);
+                onClose();
+              }
+            }}
+          >
+            就选这里
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function XtermPane({ term }: { term: ShellTermInfo }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
 
@@ -89,6 +181,7 @@ export function ShellBoard() {
   const [cwd, setCwd] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const { terminals } = await api.shellTerms();
@@ -172,12 +265,18 @@ export function ShellBoard() {
             value={cwd}
             onChange={(e) => setCwd(e.target.value)}
           />
+          <button className="ghost-btn" title="浏览文件夹" onClick={() => setPickerOpen(true)}>
+            📁 浏览
+          </button>
           <button className="primary-btn" onClick={() => void create()} disabled={creating}>
             {creating ? "启动中…" : "＋ 新终端"}
           </button>
         </div>
       </div>
       {error && <div className="shell-error">{error}</div>}
+      {pickerOpen && (
+        <FolderPicker initial={cwd} onPick={setCwd} onClose={() => setPickerOpen(false)} />
+      )}
       {active ? (
         <XtermPane key={active.id} term={active} />
       ) : (

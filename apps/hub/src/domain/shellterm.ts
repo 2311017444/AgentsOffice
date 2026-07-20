@@ -77,6 +77,18 @@ export class ShellTerminalManager {
     const cwd = opts.cwd && opts.cwd.trim().length > 0 ? opts.cwd.trim() : homedir();
     const cols = opts.cols ?? 100;
     const rows = opts.rows ?? 30;
+    // hub 可能是从自动化 shell 启动的（TERM=dumb），会话必须拿到真终端的环境；
+    // 本机回环流量绕开系统代理，否则 codex/claude 访问 hub 的 MCP 会被代理吃掉（502）
+    const noProxy = [process.env.NO_PROXY, "127.0.0.1,localhost,::1"]
+      .filter(Boolean)
+      .join(",");
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      NO_PROXY: noProxy,
+      no_proxy: noProxy,
+    };
     let pty: PtyLike;
     try {
       pty = nodePty.spawn(shell, [], {
@@ -84,7 +96,7 @@ export class ShellTerminalManager {
         cols,
         rows,
         cwd,
-        env: process.env as Record<string, string>,
+        env,
       }) as unknown as PtyLike;
     } catch (error) {
       return {
