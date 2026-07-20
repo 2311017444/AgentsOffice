@@ -1403,12 +1403,134 @@ function TaskPanel({
 
 // ---------- 实时工作台 ----------
 
+/** 员工卡详情：点工作台卡片放大查看 */
+function EmployeeCardModal({
+  agent,
+  state,
+  onClose,
+}: {
+  agent: AgentCard;
+  state: OfficeState;
+  onClose: () => void;
+}) {
+  const m = meta(agent);
+  const role = state.roles.find((r) => r.id === m.roleId);
+  const myTasks = state.tasks.filter((t) => t.assigneeAgentId === agent.id);
+  const activeTask = myTasks.find((t) => t.status === "claimed" || t.status === "in_progress");
+  const myBriefs = state.briefs.filter((b) => b.agentId === agent.id).slice(0, 5);
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="emp-card" onClick={(e) => e.stopPropagation()}>
+        <button className="icon-btn emp-close" title="关闭" onClick={onClose}>
+          ×
+        </button>
+        {/* 工牌头部 */}
+        <div className={`emp-head st-${agent.status}`}>
+          <span className="emp-avatar">
+            <Avatar agent={agent} status={agent.status} />
+          </span>
+          <div className="emp-id">
+            <strong>{agent.name}</strong>
+            <span className="emp-role">{m.title || role?.name || "暂无职位"}</span>
+            <span className="emp-kind">
+              {AGENT_KIND_LABELS[agent.kind]}
+              {m.model ? ` · ${m.model}` : ""}
+            </span>
+          </div>
+          <span className={`live-status st-${agent.status}`}>{STATUS_LABELS[agent.status]}</span>
+        </div>
+
+        {/* 当前动态 */}
+        <div className="emp-section">
+          <h4>当前动态</h4>
+          <p className="emp-activity">
+            {agent.status === "offline"
+              ? "离席"
+              : m.lastActivity
+                ? m.lastActivity
+                : "空闲，等待分派"}
+            {m.lastActivityAt && <time> · {timeAgo(m.lastActivityAt)}</time>}
+          </p>
+          {activeTask && (
+            <p className="emp-task">
+              进行中任务：{activeTask.title}（{TASK_STATUS_LABELS[activeTask.status]}）
+            </p>
+          )}
+        </div>
+
+        {/* 数据栏 */}
+        <div className="emp-stats">
+          <div>
+            <em>{agent.todayTokens ?? 0}</em>
+            <span>今日 token</span>
+          </div>
+          <div>
+            <em>{agent.doneTasks ?? 0}</em>
+            <span>完成任务</span>
+          </div>
+          <div>
+            <em>{agent.pendingCount ?? 0}</em>
+            <span>未读消息</span>
+          </div>
+          <div>
+            <em>{myBriefs.length}</em>
+            <span>近期简报</span>
+          </div>
+        </div>
+
+        {/* 档案信息 */}
+        <dl className="emp-facts">
+          {(agent.groupNames?.length ?? 0) > 0 && (
+            <div>
+              <dt>项目组</dt>
+              <dd>{agent.groupNames!.map((g) => `# ${g}`).join("　")}</dd>
+            </div>
+          )}
+          {agent.workspace && (
+            <div>
+              <dt>工作目录</dt>
+              <dd className="mono">{agent.workspace}</dd>
+            </div>
+          )}
+          <div>
+            <dt>入驻时间</dt>
+            <dd>{new Date(agent.createdAt).toLocaleString()}</dd>
+          </div>
+          {agent.lastSeenAt && (
+            <div>
+              <dt>最后在线</dt>
+              <dd>{timeAgo(agent.lastSeenAt)}</dd>
+            </div>
+          )}
+        </dl>
+
+        {/* 最近简报 */}
+        <div className="emp-section">
+          <h4>最近简报</h4>
+          {myBriefs.length === 0 && <p className="live-idle">尚无简报。</p>}
+          <ul className="emp-briefs">
+            {myBriefs.map((b) => (
+              <li key={b.id}>
+                <strong>{b.title}</strong>
+                <time>{timeAgo(b.createdAt)}</time>
+                <p>{b.result}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LiveBoard({ state }: { state: OfficeState }) {
+  const [detailId, setDetailId] = useState<string | null>(null);
   const workers = state.agents.filter((a) => a.kind !== "user" && a.kind !== "supervisor");
   const activeTasks = state.tasks.filter(
     (t) => t.status === "claimed" || t.status === "in_progress",
   );
   const busyCount = workers.filter((a) => a.status === "busy").length;
+  const detailAgent = workers.find((a) => a.id === detailId) ?? null;
   return (
     <div className="live-wrap">
       <div className="live-summary">
@@ -1427,7 +1549,12 @@ function LiveBoard({ state }: { state: OfficeState }) {
           const activityStale =
             m.lastActivityAt && Date.now() - m.lastActivityAt > 10 * 60_000;
           return (
-            <article key={agent.id} className={`live-card status-${agent.status}`}>
+            <article
+              key={agent.id}
+              className={`live-card status-${agent.status} clickable`}
+              title="点击查看员工卡"
+              onClick={() => setDetailId(agent.id)}
+            >
               <header>
                 <Avatar agent={agent} status={agent.status} />
                 <div className="live-id">
@@ -1483,6 +1610,13 @@ function LiveBoard({ state }: { state: OfficeState }) {
           );
         })}
       </div>
+      {detailAgent && (
+        <EmployeeCardModal
+          agent={detailAgent}
+          state={state}
+          onClose={() => setDetailId(null)}
+        />
+      )}
     </div>
   );
 }

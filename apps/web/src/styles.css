@@ -3148,3 +3148,195 @@ button:focus-visible {
   font-size: 12.5px;
   width: 150px;
 }
+
+/* ---------- 员工卡详情（实时工作台点开） ---------- */
+.live-card.clickable {
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+}
+
+.live-card.clickable:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent, #7aa2f7);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+
+.emp-card {
+  position: relative;
+  width: min(560px, 94vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--panel, #161a22);
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.emp-close {
+  position: absolute;
+  right: 14px;
+  top: 12px;
+  font-size: 18px;
+}
+
+.emp-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px dashed var(--border, #2a2f3a);
+}
+
+/* 大头像：把 32px 的 Avatar 放大一倍 */
+.emp-avatar .avatar {
+  width: 64px;
+  height: 64px;
+  font-size: 22px;
+}
+
+.emp-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.emp-id strong {
+  font-size: 18px;
+}
+
+.emp-role {
+  font-size: 13px;
+  color: var(--accent, #7aa2f7);
+}
+
+.emp-kind {
+  font-size: 12px;
+  color: #9aa4b8;
+}
+
+.emp-section {
+  margin-top: 16px;
+}
+
+.emp-section h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: #8a93a6;
+}
+
+.emp-activity {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.emp-activity time {
+  color: #8a93a6;
+  font-size: 12px;
+}
+
+.emp-task {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: #e0b357;
+}
+
+.emp-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.emp-stats > div {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+  padding: 10px 6px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.emp-stats em {
+  font-style: normal;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.emp-stats span {
+  font-size: 11px;
+  color: #8a93a6;
+}
+
+.emp-facts {
+  margin: 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.emp-facts > div {
+  display: flex;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.emp-facts dt {
+  flex: none;
+  width: 64px;
+  color: #8a93a6;
+}
+
+.emp-facts dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.emp-facts .mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+
+.emp-briefs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.emp-briefs li {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.emp-briefs li strong {
+  font-size: 13px;
+  margin-right: 8px;
+}
+
+.emp-briefs li time {
+  font-size: 11px;
+  color: #8a93a6;
+}
+
+.emp-briefs li p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #b6bfd0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 108px;
+  overflow-y: auto;
+}
