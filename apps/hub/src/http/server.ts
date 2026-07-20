@@ -163,6 +163,19 @@ export async function createServer(
     }
     const result = await shellTerms.create(body);
     if (!result.ok) return reply.code(500).send({ error: result.error });
+    // Agent 工位终端：开终端即入驻花名册（占位），CLI 会话回帧时自动绑定；终端关了就下线
+    if (body.command) {
+      const agent = office.registerTerminalAgent({
+        cli: body.command,
+        cwd: result.info.cwd,
+        title: body.title,
+      });
+      shellTerms.watchExit(result.info.id, () => {
+        office.store.setAgentStatus(agent.id, "offline");
+        office.setActivity(agent.id, null);
+        office.event({ type: "leave", agentId: agent.id, text: "终端工位关闭，成员下线" });
+      });
+    }
     return result.info;
   });
 

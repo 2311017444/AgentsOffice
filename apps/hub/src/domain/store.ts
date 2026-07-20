@@ -711,6 +711,23 @@ export class OfficeStore {
       .run(JSON.stringify({ ...agent.meta, ...patch }), agentId);
   }
 
+  /** 查外部会话键当前绑定的 Agent（不存在返回 null） */
+  sessionAgent(externalKey: string): AgentCard | null {
+    const row = this.db
+      .prepare("SELECT agent_id FROM sessions WHERE external_key = ?")
+      .get(externalKey) as { agent_id: string } | undefined;
+    return row ? this.getAgentById(row.agent_id) : null;
+  }
+
+  /** 把外部会话键绑定到指定 Agent（终端占位工位收养 notify/hook 会话用） */
+  linkSession(externalKey: string, agentId: string): void {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO sessions(external_key, agent_id, created_at) VALUES (?, ?, ?)",
+      )
+      .run(externalKey, agentId, now());
+  }
+
   /** 通过外部会话键（cursor:conv:x / codex:thread:x）找到或创建 Agent */
   upsertAgentBySession(
     externalKey: string,

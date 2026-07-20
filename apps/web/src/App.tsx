@@ -772,7 +772,7 @@ function NewAgentForm({ onDone, onOpenShell }: { onDone: () => void; onOpenShell
       )}
       {terminalForm && (
         <p className="form-hint">
-          终端里的 {kind} 完成第一轮对话后会自动出现在花名册（经 hooks / notify 登记）。
+          开终端即入驻花名册（在线状态）；第一轮对话后自动绑定会话，获得 @续聊 能力。
         </p>
       )}
       {error && <div className="form-error">{error}</div>}

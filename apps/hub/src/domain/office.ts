@@ -16,7 +16,7 @@ import type { OfficeBus } from "./bus.js";
 import { LogBook } from "./logbook.js";
 import type { OfficeStore } from "./store.js";
 import { TerminalLog } from "./terminal.js";
-import { truncate } from "../util.js";
+import { shortId, truncate, uuid } from "../util.js";
 
 export type ManagedDispatcher = (
   agent: AgentCard,
@@ -501,6 +501,76 @@ export class OfficeService {
     });
     this.emit("message", {});
     return { ok: true, cleared, clearedEvents };
+  }
+
+  // ---------- 终端工位（开终端即入驻，会话稍后收养） ----------
+
+  /**
+   * 终端工位占位登记：开 codex/claude 终端那一刻就入驻花名册（状态 online），
+   * 等 CLI 的 notify / hooks 带着 threadId/sessionId 回来时收养绑定，避免重复员工。
+   */
+  registerTerminalAgent(input: {
+    cli: "codex" | "claude";
+    cwd: string;
+    title?: string;
+  }): AgentCard {
+    const kind = `${input.cli}-cli` as AgentCard["kind"];
+    const wanted = input.title?.trim() || `${input.cli}-终端-${shortId(uuid())}`;
+    const existing = this.store.getAgentByName(wanted);
+    // 同名同类（比如重开同名终端）直接续用原工位；同名异类避让加后缀
+    const name =
+      existing && existing.kind !== kind ? `${wanted}-${shortId(uuid())}` : wanted;
+    const agent = this.store.registerAgent({
+      name,
+      kind,
+      workspace: input.cwd,
+      status: "online",
+      meta: { awaitingSession: input.cli },
+    });
+    this.event({
+      type: "join",
+      agentId: agent.id,
+      text: `${input.cli === "codex" ? "Codex" : "Claude"} 终端工位开工（首轮对话后自动绑定会话）`,
+    });
+    this.emit("agent", { agentId: agent.id });
+    return agent;
+  }
+
+  /** notify/hook 会话回来时认领占位工位：优先目录一致的，其次最近开的 */
+  adoptTerminalAgent(
+    cli: "codex" | "claude",
+    externalKey: string,
+    cwd: string | null,
+    meta: Record<string, unknown>,
+  ): AgentCard | null {
+    const norm = (p: string | null | undefined) =>
+      (p ?? "").replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+    const candidates = this.store
+      .listAgents()
+      .filter(
+        (a) =>
+          a.kind === `${cli}-cli` &&
+          (a.meta as { awaitingSession?: string }).awaitingSession === cli,
+      )
+      .sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0));
+    const adopted =
+      candidates.find((a) => cwd && norm(a.workspace) === norm(cwd)) ?? candidates[0];
+    if (!adopted) return null;
+    this.store.linkSession(externalKey, adopted.id);
+    const agent = this.store.registerAgent({
+      name: adopted.name,
+      kind: adopted.kind,
+      workspace: cwd ?? adopted.workspace,
+      status: "online",
+      meta: { ...meta, awaitingSession: undefined },
+    });
+    this.event({
+      type: "join",
+      agentId: agent.id,
+      text: `终端工位绑定 ${cli === "codex" ? "Codex 线程" : "Claude 会话"}，可交接续聊`,
+    });
+    this.emit("agent", { agentId: agent.id });
+    return agent;
   }
 
   // ---------- Agent 管理 ----------

@@ -185,6 +185,18 @@ export class ShellTerminalManager {
     return true;
   }
 
+  /** 只订阅退出（终端工位下线联动用）；会话已死则立即回调 */
+  watchExit(id: string, onExit: (code: number) => void): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    if (!s.info.alive) {
+      onExit(s.info.exitCode ?? 0);
+      return true;
+    }
+    s.exitListeners.add(onExit);
+    return true;
+  }
+
   /** 订阅输出；返回取消函数。attach 时先把缓冲回放给调用方 */
   attach(
     id: string,

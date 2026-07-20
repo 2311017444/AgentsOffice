@@ -153,7 +153,14 @@ export function handleClaudeHook(
 
   const model =
     (typeof payload.model === "string" && payload.model) || undefined;
-  const agent = office.store.upsertAgentBySession(`claude:session:${sessionId}`, {
+  // 终端工位占位收养：开「Claude 工位」时已先入驻，这里把会话绑到那个工位
+  const claudeKey = `claude:session:${sessionId}`;
+  if (!office.store.sessionAgent(claudeKey)) {
+    office.adoptTerminalAgent("claude", claudeKey, (payload.cwd as string) ?? null, {
+      sessionId,
+    });
+  }
+  const agent = office.store.upsertAgentBySession(claudeKey, {
     name: `claude-${shortId(sessionId)}`,
     kind: "claude-cli",
     workspace: (payload.cwd as string) ?? null,
@@ -288,7 +295,12 @@ export function handleCodexNotify(
     return { ok: true };
   }
 
-  const agent = office.store.upsertAgentBySession(`codex:thread:${threadId}`, {
+  // 终端工位占位收养：开「Codex 工位」时已先入驻，这里把线程绑到那个工位而不是新建员工
+  const externalKey = `codex:thread:${threadId}`;
+  if (!office.store.sessionAgent(externalKey)) {
+    office.adoptTerminalAgent("codex", externalKey, cwd, { threadId });
+  }
+  const agent = office.store.upsertAgentBySession(externalKey, {
     name: `codex-${shortId(threadId)}`,
     kind: "codex-cli",
     workspace: cwd,
