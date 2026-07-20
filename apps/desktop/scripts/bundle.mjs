@@ -34,7 +34,7 @@ await build({
   format: "esm",
   target: "node22",
   outfile: join(OUT, "resources/hub/index.mjs"),
-  external: ["@cursor/sdk"],
+  external: ["@cursor/sdk", "@lydell/node-pty"],
   banner: {
     js: "import { createRequire as __cr } from 'node:module';const require = __cr(import.meta.url);",
   },
@@ -45,7 +45,11 @@ await build({
 writeFileSync(
   join(OUT, "resources/hub/package.json"),
   JSON.stringify(
-    { name: "agent-office-hub", private: true, dependencies: { "@cursor/sdk": "^1.0.23" } },
+    {
+      name: "agent-office-hub",
+      private: true,
+      dependencies: { "@cursor/sdk": "^1.0.23", "@lydell/node-pty": "1.2.0-beta.12" },
+    },
     null,
     2,
   ),

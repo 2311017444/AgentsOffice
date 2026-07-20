@@ -11,6 +11,8 @@
   "dependencies": {
     "@agent-office/protocol": "workspace:*",
     "@fastify/static": "^8.0.4",
+    "@fastify/websocket": "^11.0.2",
+    "@lydell/node-pty": "1.2.0-beta.12",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "fastify": "^5.2.1",
     "smol-toml": "^1.3.1",

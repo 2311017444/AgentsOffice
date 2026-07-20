@@ -3,4 +3,4 @@ dist/
 *.log
 .DS_Store
 data/
-apps/desktop/release/
+apps/desktop/release*/

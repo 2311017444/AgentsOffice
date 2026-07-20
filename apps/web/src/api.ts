@@ -32,6 +32,18 @@ export interface TerminalPane {
   lines: TermLine[];
 }
 
+export interface ShellTermInfo {
+  id: string;
+  title: string;
+  shell: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  createdAt: number;
+  alive: boolean;
+  exitCode: number | null;
+}
+
 export interface Health {
   ok: boolean;
   port: number;
@@ -191,4 +203,20 @@ export const api = {
     }).then((r) => json<KbDoc>(r)),
   kbDelete: (id: string) =>
     fetch(`/api/kb/docs/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
+  shellTerms: () =>
+    fetch("/api/shellterms").then((r) => json<{ terminals: ShellTermInfo[] }>(r)),
+  shellTermCreate: (input: { shell?: string; cwd?: string; title?: string }) =>
+    fetch("/api/shellterms", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }).then((r) => json<ShellTermInfo>(r)),
+  shellTermClose: (id: string) =>
+    fetch(`/api/shellterms/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
 };
+
+/** 打开某个内嵌终端的双向 WebSocket（同源；开发模式经 vite 代理） */
+export function shellTermSocket(id: string): WebSocket {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  return new WebSocket(`${proto}://${location.host}/api/shellterms/${id}/ws`);
+}

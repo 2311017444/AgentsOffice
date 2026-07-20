@@ -2443,3 +2443,145 @@ button:focus-visible {
 .term-prompt code { color: #8ad5ff; }
 .hist-prompt code { color: #bfe7ff; }
 .hist-final code { color: #cdeeda; }
+
+/* ---------- 本机终端（应用内 Windows 终端） ---------- */
+.shell-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+}
+
+.shell-board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shell-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.shell-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 32px;
+}
+
+.shell-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #2a2f3a);
+  background: var(--panel, #161a22);
+  color: var(--text-dim, #aab2c0);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.shell-tab.active {
+  border-color: #7aa2f7;
+  color: #e8ecf4;
+  background: #1b2333;
+}
+
+.shell-tab.dead {
+  opacity: 0.6;
+}
+
+.shell-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.shell-dot.on {
+  background: #4ade80;
+}
+
+.shell-dot.off {
+  background: #6b7280;
+}
+
+.shell-tab-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.shell-tab-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #f87171;
+}
+
+.shell-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-new select,
+.shell-new input {
+  background: var(--panel, #161a22);
+  border: 1px solid var(--border, #2a2f3a);
+  color: var(--text, #d8dee9);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+.shell-new input {
+  width: 240px;
+}
+
+.shell-error {
+  color: #f87171;
+  font-size: 12.5px;
+}
+
+.shell-xterm {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d1017;
+  padding: 8px 0 8px 10px;
+}
+
+.shell-xterm .xterm {
+  height: 100%;
+}
+
+.shell-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-dim, #aab2c0);
+  border: 1px dashed var(--border, #2a2f3a);
+  border-radius: 10px;
+}
+
+.shell-empty .muted {
+  font-size: 12.5px;
+  opacity: 0.7;
+}

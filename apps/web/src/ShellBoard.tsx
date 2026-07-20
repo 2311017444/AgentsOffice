@@ -1,0 +1,191 @@
+// 应用内 Windows 终端：xterm.js 前端 + hub 的 ConPTY 会话（WebSocket 双向流）
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import { api, shellTermSocket, type ShellTermInfo } from "./api";
+
+const XTERM_THEME = {
+  background: "#0d1017",
+  foreground: "#d8dee9",
+  cursor: "#7aa2f7",
+  selectionBackground: "#33415e",
+};
+
+function XtermPane({ term }: { term: ShellTermInfo }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const xterm = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: "'Cascadia Mono', Consolas, 'Courier New', monospace",
+      theme: XTERM_THEME,
+      scrollback: 5000,
+    });
+    const fit = new FitAddon();
+    xterm.loadAddon(fit);
+    xterm.open(host);
+    fit.fit();
+
+    const ws = shellTermSocket(term.id);
+    let closed = false;
+    ws.onopen = () => {
+      fit.fit();
+      ws.send(JSON.stringify({ type: "resize", cols: xterm.cols, rows: xterm.rows }));
+      xterm.focus();
+    };
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(String(event.data)) as {
+          type: string;
+          data?: string;
+          code?: number;
+          message?: string;
+        };
+        if (msg.type === "out" && msg.data) xterm.write(msg.data);
+        else if (msg.type === "exit") {
+          xterm.write(`\r\n\x1b[90m[进程已退出，退出码 ${msg.code ?? 0}]\x1b[0m\r\n`);
+        } else if (msg.type === "error") {
+          xterm.write(`\r\n\x1b[31m[${msg.message ?? "连接错误"}]\x1b[0m\r\n`);
+        }
+      } catch {
+        /* 忽略坏帧 */
+      }
+    };
+    ws.onclose = () => {
+      if (!closed) xterm.write("\r\n\x1b[90m[连接已断开]\x1b[0m\r\n");
+    };
+    const dataSub = xterm.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "in", data }));
+    });
+
+    const observer = new ResizeObserver(() => {
+      fit.fit();
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "resize", cols: xterm.cols, rows: xterm.rows }));
+      }
+    });
+    observer.observe(host);
+
+    return () => {
+      closed = true;
+      observer.disconnect();
+      dataSub.dispose();
+      ws.close();
+      xterm.dispose();
+    };
+  }, [term.id]);
+
+  return <div className="shell-xterm" ref={hostRef} />;
+}
+
+export function ShellBoard() {
+  const [terms, setTerms] = useState<ShellTermInfo[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [shell, setShell] = useState("powershell");
+  const [cwd, setCwd] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const { terminals } = await api.shellTerms();
+    setTerms(terminals);
+    setActiveId((cur) => {
+      if (cur && terminals.some((t) => t.id === cur)) return cur;
+      return terminals.at(-1)?.id ?? null;
+    });
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const create = async () => {
+    setCreating(true);
+    setError(null);
+    try {
+      const info = await api.shellTermCreate({
+        shell,
+        cwd: cwd.trim() || undefined,
+      });
+      setTerms((prev) => [...prev, info]);
+      setActiveId(info.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const close = async (id: string) => {
+    try {
+      await api.shellTermClose(id);
+    } catch {
+      /* 已经没了也无妨 */
+    }
+    setTerms((prev) => prev.filter((t) => t.id !== id));
+    setActiveId((cur) => (cur === id ? null : cur));
+    void refresh();
+  };
+
+  const active = terms.find((t) => t.id === activeId) ?? null;
+
+  return (
+    <div className="shell-board">
+      <div className="shell-toolbar">
+        <div className="shell-tabs" role="tablist">
+          {terms.map((t) => (
+            <div
+              key={t.id}
+              role="tab"
+              aria-selected={t.id === activeId}
+              className={`shell-tab ${t.id === activeId ? "active" : ""} ${t.alive ? "" : "dead"}`}
+              onClick={() => setActiveId(t.id)}
+              title={`${t.shell} · ${t.cwd}`}
+            >
+              <span className={`shell-dot ${t.alive ? "on" : "off"}`} aria-hidden />
+              {t.title}
+              <button
+                className="shell-tab-close"
+                title="关闭终端"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void close(t.id);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="shell-new">
+          <select value={shell} onChange={(e) => setShell(e.target.value)} title="选择 shell">
+            <option value="powershell">PowerShell</option>
+            <option value="cmd">CMD</option>
+            <option value="pwsh">pwsh 7</option>
+          </select>
+          <input
+            placeholder="启动目录（留空 = 用户主目录）"
+            value={cwd}
+            onChange={(e) => setCwd(e.target.value)}
+          />
+          <button className="primary-btn" onClick={() => void create()} disabled={creating}>
+            {creating ? "启动中…" : "＋ 新终端"}
+          </button>
+        </div>
+      </div>
+      {error && <div className="shell-error">{error}</div>}
+      {active ? (
+        <XtermPane key={active.id} term={active} />
+      ) : (
+        <div className="shell-empty">
+          <p>还没有打开的终端</p>
+          <p className="muted">点右上角「＋ 新终端」开一个 PowerShell / CMD，直接在应用里干活。</p>
+        </div>
+      )}
+    </div>
+  );
+}

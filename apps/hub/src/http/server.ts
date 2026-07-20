@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
+import fastifyWebsocket from "@fastify/websocket";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +15,7 @@ import {
   handleCursorHook,
 } from "../integrations/ingest.js";
 import { createMcpServer } from "../mcp/tools.js";
+import { ShellTerminalManager } from "../domain/shellterm.js";
 import { cliExists } from "../util.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +26,7 @@ export async function createServer(
 ): Promise<FastifyInstance> {
   // bodyLimit 放宽以支持 base64 图片上传（约 20MB 原图）
   const app = Fastify({ logger: false, bodyLimit: 30 * 1024 * 1024 });
+  await app.register(fastifyWebsocket);
 
   // 上传目录：附图落盘在数据目录下，经 /files/ 对外提供
   const uploadsDir = join(config.dataDir, "uploads");
@@ -133,6 +136,78 @@ export async function createServer(
     const name = `${uuid()}.${ext}`;
     writeFileSync(join(uploadsDir, name), buffer);
     return { ok: true, url: `/files/${name}` };
+  });
+
+  // ---------- 应用内 Windows 终端（ConPTY 伪终端 + WebSocket 双向流） ----------
+  const shellTerms = new ShellTerminalManager();
+  app.addHook("onClose", async () => shellTerms.shutdown());
+
+  app.get("/api/shellterms", async () => ({ terminals: shellTerms.list() }));
+
+  app.post("/api/shellterms", async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      shell?: string;
+      cwd?: string;
+      cols?: number;
+      rows?: number;
+      title?: string;
+    };
+    if (body.cwd && !existsSync(body.cwd.trim())) {
+      return reply.code(400).send({ error: `启动目录不存在：${body.cwd.trim()}` });
+    }
+    const result = await shellTerms.create(body);
+    if (!result.ok) return reply.code(500).send({ error: result.error });
+    return result.info;
+  });
+
+  app.delete("/api/shellterms/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!shellTerms.close(id)) return reply.code(404).send({ error: "终端不存在" });
+    return { ok: true };
+  });
+
+  app.post("/api/shellterms/:id/resize", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as { cols?: number; rows?: number };
+    if (!shellTerms.resize(id, Number(body.cols), Number(body.rows))) {
+      return reply.code(400).send({ error: "resize 失败" });
+    }
+    return { ok: true };
+  });
+
+  app.get("/api/shellterms/:id/ws", { websocket: true }, (socket, request) => {
+    const { id } = request.params as { id: string };
+    const detach = shellTerms.attach(
+      id,
+      (chunk) => socket.send(JSON.stringify({ type: "out", data: chunk })),
+      (code) => {
+        socket.send(JSON.stringify({ type: "exit", code }));
+        socket.close();
+      },
+    );
+    if (!detach) {
+      socket.send(JSON.stringify({ type: "error", message: "终端不存在" }));
+      socket.close();
+      return;
+    }
+    socket.on("message", (raw: Buffer) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as {
+          type?: string;
+          data?: string;
+          cols?: number;
+          rows?: number;
+        };
+        if (msg.type === "in" && typeof msg.data === "string") {
+          shellTerms.write(id, msg.data);
+        } else if (msg.type === "resize") {
+          shellTerms.resize(id, Number(msg.cols), Number(msg.rows));
+        }
+      } catch {
+        /* 忽略坏帧 */
+      }
+    });
+    socket.on("close", () => detach());
   });
 
   // ---------- 项目组 ----------

@@ -16,6 +16,7 @@ import type {
   OfficeTask,
 } from "@agent-office/protocol";
 import { api, type Health, type OfficeState, type TerminalPane } from "./api";
+import { ShellBoard } from "./ShellBoard";
 
 const STATUS_LABELS: Record<string, string> = {
   online: "在席",
@@ -1876,7 +1877,9 @@ export function App() {
   const [state, setState] = useState<OfficeState | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [mentionPrefill, setMentionPrefill] = useState("");
-  const [view, setView] = useState<"office" | "live" | "terminal" | "logs" | "kb">("office");
+  const [view, setView] = useState<"office" | "live" | "terminal" | "shell" | "logs" | "kb">(
+    "office",
+  );
   const [channel, setChannel] = useState("hall");
   const [onboardOpen, setOnboardOpen] = useState(false);
   const refreshTimer = useRef<number | null>(null);
@@ -1979,6 +1982,14 @@ export function App() {
           </button>
           <button
             role="tab"
+            aria-selected={view === "shell"}
+            className={view === "shell" ? "active" : ""}
+            onClick={() => setView("shell")}
+          >
+            本机终端
+          </button>
+          <button
+            role="tab"
             aria-selected={view === "logs"}
             className={view === "logs" ? "active" : ""}
             onClick={() => setView("logs")}
@@ -2020,6 +2031,10 @@ export function App() {
       ) : view === "terminal" ? (
         <main className="terminal-main">
           <TerminalBoard refreshKey={state.events.length} />
+        </main>
+      ) : view === "shell" ? (
+        <main className="shell-main">
+          <ShellBoard />
         </main>
       ) : view === "logs" ? (
         <main className="logs-main">
