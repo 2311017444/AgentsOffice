@@ -1828,8 +1828,8 @@ button:focus-visible {
 /* ---------- 员工资料与终端管理 ---------- */
 .avatar-art {
   display: grid;
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   border-radius: inherit;
 }
@@ -3098,6 +3098,9 @@ button:focus-visible {
 
 /* 头像图片（工位卡/消息里用上传形象） */
 .avatar-img {
+  /* 绝对定位铺满头像框：grid 自动行高下 height:100% 会失效导致原图撑破卡片 */
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
