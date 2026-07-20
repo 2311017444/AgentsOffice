@@ -1,0 +1,51 @@
+{
+  "name": "@agent-office/desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Agent Office 桌面客户端",
+  "author": "ZZDH",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "start": "electron .",
+    "dist": "node scripts/bundle.mjs && electron-builder --win"
+  },
+  "devDependencies": {
+    "@agent-office/hub": "workspace:*",
+    "@agent-office/web": "workspace:*",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.5"
+  },
+  "build": {
+    "appId": "com.zzdh.agent-office",
+    "productName": "AgentOffice",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/main.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/resources",
+        "to": "app"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Agent Office"
+    },
+    "portable": {
+      "artifactName": "AgentOffice-${version}-portable.exe"
+    }
+  }
+}

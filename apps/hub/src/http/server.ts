@@ -448,7 +448,8 @@ export async function createServer(
   });
 
   // ---------- 网页静态资源 ----------
-  const webDist = join(HERE, "../../../web/dist");
+  // 桌面客户端打包后 hub 与 web 不在源码目录里，用环境变量指过去
+  const webDist = process.env.AGENT_OFFICE_WEB_DIST ?? join(HERE, "../../../web/dist");
   if (existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist });
     app.setNotFoundHandler((request, reply) => {

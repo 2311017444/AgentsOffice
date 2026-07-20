@@ -30,6 +30,7 @@
 | --- | --- |
 | `apps/hub` | 协作中枢：Fastify + SQLite（node:sqlite）+ SSE + MCP（Streamable HTTP，端点 `/mcp`） |
 | `apps/web` | 办公室网页：工位、动态流、简报墙、任务看板、实时工作台（构建后由 Hub 直接托管） |
+| `apps/desktop` | Windows 桌面客户端（Electron）：内置 hub 与网页，双击 exe 即用 |
 | `packages/protocol` | 共享类型、@mention 解析、托管/主管提示词模板 |
 | `hooks/` | Cursor hooks、Codex notify、Claude Code hooks 的零依赖转发脚本 |
 
@@ -56,6 +57,16 @@ pnpm start
 ```
 
 打开 http://127.0.0.1:4517 即可看到办公室。重启 Cursor 会话 / Codex 终端 / Claude Code 会话后自动入驻。
+
+### 桌面客户端（exe）
+
+```bash
+pnpm --filter @agent-office/desktop dist
+```
+
+产物在 `apps/desktop/release/`：`AgentOffice Setup <版本>.exe`（安装版）与 `AgentOffice-<版本>-portable.exe`（便携版）。
+客户端自带 hub 与网页：启动时若发现本机 4517 已有 hub 在跑则直接连上（退出时不动它）；
+否则用 Electron 内置 Node 拉起打包好的 hub，关窗即回收。数据仍在 `~/.agent-office`，与命令行方式完全共用。
 
 安装器会以幂等方式合并以下配置（每个文件都会先生成 `.bak-时间戳` 备份）。
 
