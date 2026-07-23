@@ -2588,7 +2588,9 @@ button:focus-visible {
 
 /* ---------- 文件夹选择弹窗 ---------- */
 .folder-picker {
-  width: min(520px, 92vw);
+  width: min(680px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  height: min(720px, calc(100dvh - 32px));
   display: flex;
   flex-direction: column;
 }
@@ -2633,7 +2635,8 @@ button:focus-visible {
 }
 
 .picker-list {
-  height: 300px;
+  flex: 1 1 auto;
+  min-height: 96px;
   overflow-y: auto;
   border-top: 1px solid var(--border, #2a2f3a);
   border-bottom: 1px solid var(--border, #2a2f3a);
@@ -2642,16 +2645,24 @@ button:focus-visible {
 }
 
 .picker-dir {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   text-align: left;
   border: none;
   background: transparent;
   color: var(--text, #d8dee9);
-  padding: 7px 20px;
+  padding: 8px 20px;
   font-size: 13px;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.picker-dir-name {
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .picker-dir:hover {

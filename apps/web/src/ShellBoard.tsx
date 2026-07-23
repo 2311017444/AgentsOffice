@@ -76,8 +76,14 @@ export function FolderPicker({
             <div className="picker-hint">（没有子文件夹）</div>
           ) : (
             dirs.map((d) => (
-              <button key={d.path} className="picker-dir" onClick={() => void load(d.path)}>
-                📁 {d.name}
+              <button
+                key={d.path}
+                className="picker-dir"
+                title={d.path}
+                onClick={() => void load(d.path)}
+              >
+                <span aria-hidden="true">📁</span>
+                <span className="picker-dir-name">{d.name}</span>
               </button>
             ))
           )}
